@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+dist-eggs/
+*.manifest
+*.spec.bak
+
+# 虚拟环境
+venv/
+.venv/
+env/
+.env/
+
+# 构建产物（exe 可本地打包生成）
+build/
+dist/
+*.exe
+
+# 日志与临时
+*.log
+*.tmp
+*.temp
+.cache/
+
+# 测试/输出数据（可本地生成）
+TestData/_output/
+TestData/MergeExcelBackup/
+TestData/*_compare.xlsx
+TestData/local_compare.xlsx
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# PyInstaller
+*.spec.bak
