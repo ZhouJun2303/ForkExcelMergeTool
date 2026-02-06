@@ -22,7 +22,7 @@ import platform
 import traceback
 from datetime import datetime
 
-# Sheet 名过滤：跳过 # 开头、Sheet 默认名
+# Sheet 名过滤：仅跳过 # 开头的表名（Sheet1/Sheet2 等会参与合并与冲突检测）
 _SKIP_PREFIX = "#"
 _LOG_FILE = "MergeExcelFork.log"
 
@@ -46,7 +46,6 @@ def _log(msg, is_error=False):
             f.write("%s %s%s\n" % (ts, prefix, msg))
     except Exception:
         pass
-_SKIP_SHEET_PREFIX = "Sheet"
 _BACKUP_SUBDIR = "MergeExcelBackup"
 _COMPARE_SUFFIX = "_compare"
 
@@ -58,9 +57,9 @@ def _cell_str(c):
 
 
 def _should_skip_sheet(name):
-    """跳过 # 开头或 Sheet 开头的表名"""
+    """跳过 # 开头的表名；不跳过 Sheet1/Sheet2 等常见表名，否则会导致冲突列表为空"""
     s = (name or "").strip()
-    return s.startswith(_SKIP_PREFIX) or s.startswith(_SKIP_SHEET_PREFIX)
+    return s.startswith(_SKIP_PREFIX)
 
 
 def _get_sheet_names(wb):
