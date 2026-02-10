@@ -10,5 +10,5 @@ if not exist "%A%" (
     echo Example: run_compare.bat TestData\local.xlsx TestData\remote.xlsx
     exit /b 1
 )
-python "%~dp0MergeExcelFork.py" "%A%" "%B%"
+python "%~dp0Scripts\MergeExcelFork.py" "%A%" "%B%"
 exit /b %ERRORLEVEL%

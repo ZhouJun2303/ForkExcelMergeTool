@@ -17,7 +17,7 @@ echo 依赖 OK
 echo.
 
 echo [2/4] 使用 PyInstaller 打包...
-pyinstaller --onefile --console --name ExcelMergeFork --clean MergeExcelFork.py
+pyinstaller --onefile --console --name ExcelMergeFork --clean Scripts\MergeExcelFork.py
 if %ERRORLEVEL% neq 0 (
     echo ERROR: PyInstaller 打包失败
     pause

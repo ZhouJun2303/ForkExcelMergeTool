@@ -9,7 +9,7 @@ if not exist "%TD%\base.xlsx" (
     echo Generating test data...
     python "%TD%\gen_test_data.py"
 )
-python "%~dp0MergeExcelFork.py" "%TD%\local.xlsx" "%TD%\base.xlsx" "%TD%\remote.xlsx" "%OUT%\merged.xlsx"
+python "%~dp0Scripts\MergeExcelFork.py" "%TD%\local.xlsx" "%TD%\base.xlsx" "%TD%\remote.xlsx" "%OUT%\merged.xlsx"
 if %ERRORLEVEL% equ 0 (
     echo Opening output folder...
     start "" explorer "%OUT%"

@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['MergeExcelFork.py'],
+    ['Scripts\\MergeExcelFork.py'],
     pathex=[],
     binaries=[],
     datas=[],

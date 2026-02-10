@@ -109,6 +109,7 @@ Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Too
 
 ```text
 ExcelMergeFork.exe <本地文件> <基准文件> <线上文件> <输出合并文件>
+python Scripts\MergeExcelFork.py <本地> <基准> <线上> <输出>
 ```
 
 例如：
@@ -121,6 +122,7 @@ ExcelMergeFork.exe D:\repo\Test.xlsx D:\repo\Base.xlsx D:\repo\Remote.xlsx D:\re
 
 ```text
 ExcelMergeFork.exe <文件A> <文件B>
+python Scripts\MergeExcelFork.py <文件A> <文件B>
 ```
 
 会生成 `{文件A 同名}_compare.xlsx` 并自动打开。
@@ -186,6 +188,28 @@ ExcelMergeFork.exe <文件A> <文件B>
 - **测试合并**：双击 `run_quick_test.bat`，或手动：  
   `run_merge.bat TestData\local.xlsx TestData\base.xlsx TestData\remote.xlsx TestData\_output\merged.xlsx`
 - **测试对比**：`run_compare.bat TestData\local.xlsx TestData\remote.xlsx`
+
+---
+
+## 十、项目结构（开发者）
+
+**规范：所有脚本放在 `Scripts` 文件夹下。** 根目录仅保留启动器、批处理、配置与文档。
+
+| 路径 | 职责 |
+|------|------|
+| **MergeExcelFork.py**（根目录） | 启动器：将 Scripts 加入路径后调用 Scripts.MergeExcelFork.main() |
+| **Scripts/MergeExcelFork.py** | 入口：解析参数，启动合并/对比 GUI 或回退命令行 |
+| **Scripts/config.py** | 全局常量：日志文件名、备份目录、对比后缀、Sheet 跳过前缀 |
+| **Scripts/log_util.py** | 日志：写日志到文件、解析日志路径 |
+| **Scripts/excel_io.py** | Excel 读写与行/Key 抽象：加载 Sheet、合并格取值、Key 规范化、行相等判断 |
+| **Scripts/merge_core.py** | 三向合并核心：无 GUI 时的合并与备份（命令行回退用） |
+| **Scripts/compare_core.py** | 二向对比核心：计算差异、生成对比 Excel |
+| **Scripts/git_util.py** | Git 操作：冲突解决后 git add、清理临时文件与备份、获取提交信息 |
+| **Scripts/conflict.py** | 冲突检测：三份 Excel 比较得到冲突项与每 Sheet 数据（供合并 GUI） |
+| **Scripts/gui_common.py** | GUI 公共：日志到状态栏、颜色图例、打开文件、统一样式 |
+| **Scripts/merge_gui.py** | 合并窗口：冲突列表、生成合并结果（以本地为底）、确认并解决冲突 |
+| **Scripts/diff_gui.py** | 对比窗口：差异列表、生成并打开对比 Excel |
+| **Scripts/ExcelMergeGUI.py** | 向后兼容：对外仍暴露 MergeWindow/DiffWindow，直接运行可预览合并界面（需根目录 TestData） |
 
 ---
 

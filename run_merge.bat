@@ -10,5 +10,5 @@ if "%LOCAL%"=="" (
     echo Example: run_merge.bat TestData\local.xlsx TestData\base.xlsx TestData\remote.xlsx TestData\_output\merged.xlsx
     exit /b 1
 )
-python "%~dp0MergeExcelFork.py" "%LOCAL%" "%BASE%" "%REMOTE%" "%MERGED%"
+python "%~dp0Scripts\MergeExcelFork.py" "%LOCAL%" "%BASE%" "%REMOTE%" "%MERGED%"
 exit /b %ERRORLEVEL%
