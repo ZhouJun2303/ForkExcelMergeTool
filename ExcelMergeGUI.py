@@ -118,17 +118,39 @@ def _compute_conflicts(path_local, path_base, path_remote):
         ws_b = wb_b[sheet_name] if sheet_name in wb_b.sheetnames else None
         ws_r = wb_r[sheet_name] if sheet_name in wb_r.sheetnames else None
 
-        rows_l = _core._load_sheet_rows(ws_l) if ws_l else []
-        rows_b = _core._load_sheet_rows(ws_b) if ws_b else []
-        rows_r = _core._load_sheet_rows(ws_r) if ws_r else []
+        # 用三份表的最大列数统一加载；不跳过首列空行以保留表头，并记录 key->行号 便于写回时复制格式
+        max_col_sheet = max(
+            (ws_l.max_column or 1) if ws_l else 1,
+            (ws_b.max_column or 1) if ws_b else 1,
+            (ws_r.max_column or 1) if ws_r else 1,
+        )
+        rows_l, idx_l = _core._load_sheet_rows_full(ws_l, max_col_sheet) if ws_l else ([], [])
+        rows_b, idx_b = _core._load_sheet_rows_full(ws_b, max_col_sheet) if ws_b else ([], [])
+        rows_r, idx_r = _core._load_sheet_rows_full(ws_r, max_col_sheet) if ws_r else ([], [])
 
-        # 用规范化 key，避免 1 与 1.0 被当成不同行导致漏冲突
-        dict_l = _rows_to_dict_normalized(rows_l)
-        dict_b = _rows_to_dict_normalized(rows_b)
-        dict_r = _rows_to_dict_normalized(rows_r)
-        ord_b = _ordered_keys_normalized(rows_b)
-        ord_l = _ordered_keys_normalized(rows_l)
-        ord_r = _ordered_keys_normalized(rows_r)
+        def _dict_and_order(rows, row_indices):
+            d = {}
+            key_to_row = {}
+            ord_list = []
+            seen = set()
+            for i, r in enumerate(rows):
+                if i >= len(row_indices):
+                    break
+                k = _core._cell_str(r[0]) if r else ""
+                if not k:
+                    k = "__row_%d" % row_indices[i]
+                else:
+                    k = _key_str_normalized(k)
+                d[k] = r
+                key_to_row[k] = row_indices[i]
+                if k not in seen:
+                    seen.add(k)
+                    ord_list.append(k)
+            return d, key_to_row, ord_list
+
+        dict_l, key_to_row_l, ord_l = _dict_and_order(rows_l, idx_l)
+        dict_b, key_to_row_b, ord_b = _dict_and_order(rows_b, idx_b)
+        dict_r, key_to_row_r, ord_r = _dict_and_order(rows_r, idx_r)
 
         base_set = set(dict_b)
         local_set = set(dict_l)
@@ -178,6 +200,7 @@ def _compute_conflicts(path_local, path_base, path_remote):
         sheet_data[sheet_name] = {
             "base_rows": dict_b, "local_rows": dict_l, "remote_rows": dict_r,
             "base_ordered": ord_b, "local_ordered": ord_l, "remote_ordered": ord_r,
+            "key_to_row_l": key_to_row_l, "key_to_row_r": key_to_row_r, "key_to_row_b": key_to_row_b,
             "max_col": max(
                 max(len(r) for r in rows_l) if rows_l else 1,
                 max(len(r) for r in rows_b) if rows_b else 1,
@@ -508,7 +531,9 @@ class MergeWindow:
             remote_set = set(remote_rows)
             all_keys = base_set | local_set | remote_set
             merged = []
-            row_types = {}  # key -> "新增"|"修改"|"冲突"
+            merged_keys = []  # 与 merged 逐行对应，便于写回时查 source_map / key_to_row
+            row_types = {}   # key -> "新增"|"修改"|"冲突"
+            source_map = {}  # key -> "local" | "remote"（该行取值来源，用于写回时复制格式）
 
             def process(key):
                 br = base_rows.get(key)
@@ -518,49 +543,114 @@ class MergeWindow:
                 if lr is not None and rr is not None:
                     if _core._row_equal(lr, rr):
                         merged.append(list(lr))
+                        merged_keys.append(key)
+                        source_map[key] = "local"
                         if br is None:
                             row_types[key] = "新增"
                         elif not _core._row_equal(br, lr):
                             row_types[key] = "修改"
                     elif br is None or (not _core._row_equal(br, lr) and not _core._row_equal(br, rr)):
                         row_types[key] = "冲突"
-                        merged.append(list(lr) if ch == "local" else list(rr))
+                        if ch == "local":
+                            merged.append(list(lr))
+                            merged_keys.append(key)
+                            source_map[key] = "local"
+                        else:
+                            merged.append(list(rr))
+                            merged_keys.append(key)
+                            source_map[key] = "remote"
                     elif _core._row_equal(br, lr):
                         merged.append(list(rr))
+                        merged_keys.append(key)
                         row_types[key] = "修改"
+                        source_map[key] = "remote"
                     elif _core._row_equal(br, rr):
                         merged.append(list(lr))
+                        merged_keys.append(key)
                         row_types[key] = "修改"
+                        source_map[key] = "local"
                     else:
                         row_types[key] = "冲突"
-                        merged.append(list(lr) if ch == "local" else list(rr))
+                        if ch == "local":
+                            merged.append(list(lr))
+                            merged_keys.append(key)
+                            source_map[key] = "local"
+                        else:
+                            merged.append(list(rr))
+                            merged_keys.append(key)
+                            source_map[key] = "remote"
                 elif lr is not None:
                     merged.append(list(lr))
+                    merged_keys.append(key)
+                    source_map[key] = "local"
                     row_types[key] = "新增" if br is None else ("修改" if not _core._row_equal(br, lr) else None)
                 elif rr is not None:
                     merged.append(list(rr))
+                    merged_keys.append(key)
+                    source_map[key] = "remote"
                     row_types[key] = "新增" if br is None else ("修改" if not _core._row_equal(br, rr) else None)
 
+            # 先输出表头行（__row_1, __row_2, ...）：以本地顺序为主，再补 base/remote 独有的表头，避免冲突 sheet 第一行丢或错位
+            def is_header_key(k):
+                return isinstance(k, str) and k.startswith("__row_")
+            seen_headers = []
+            for k in local_ord:
+                if is_header_key(k) and k not in seen_headers:
+                    seen_headers.append(k)
             for k in base_ord:
+                if is_header_key(k) and k not in seen_headers:
+                    seen_headers.append(k)
+            for k in remote_ord:
+                if is_header_key(k) and k not in seen_headers:
+                    seen_headers.append(k)
+            for k in seen_headers:
                 if k in all_keys:
                     process(k)
+            for k in base_ord:
+                if k in all_keys and not is_header_key(k):
+                    process(k)
             for k in local_ord:
-                if k not in base_set and k in all_keys:
+                if k not in base_set and k in all_keys and not is_header_key(k):
                     process(k)
             for k in remote_ord:
-                if k not in base_set and k not in local_set and k in all_keys:
+                if k not in base_set and k not in local_set and k in all_keys and not is_header_key(k):
                     process(k)
 
             for r in merged:
                 while len(r) < max_col:
                     r.append("")
-            return merged, row_types
+            return merged, merged_keys, row_types, source_map
+
+        # 重新打开三份表用于复制列宽、行高、单元格格式（不读公式缓存）
+        wb_l = openpyxl.load_workbook(self.path_local, data_only=False)
+        wb_r = openpyxl.load_workbook(self.path_remote, data_only=False)
+        from openpyxl.utils import get_column_letter
+
+        def _safe_copy(style_attr, default=None):
+            if style_attr is None:
+                return default
+            return getattr(style_attr, "copy", lambda: style_attr)()
+
+        def copy_cell_style(src_cell, dst_cell):
+            if src_cell is None:
+                return
+            try:
+                if src_cell.font and (getattr(src_cell.font, "name", None) or getattr(src_cell.font, "size", None) or getattr(src_cell.font, "bold", None) or getattr(src_cell.font, "color", None)):
+                    dst_cell.font = _safe_copy(src_cell.font, src_cell.font)
+                if src_cell.fill and getattr(src_cell.fill, "patternType", None):
+                    dst_cell.fill = _safe_copy(src_cell.fill, src_cell.fill)
+                if src_cell.border and (getattr(src_cell.border, "left", None) or getattr(src_cell.border, "right", None) or getattr(src_cell.border, "top", None) or getattr(src_cell.border, "bottom", None)):
+                    dst_cell.border = _safe_copy(src_cell.border, src_cell.border)
+                if src_cell.alignment and (getattr(src_cell.alignment, "horizontal", None) or getattr(src_cell.alignment, "vertical", None) or getattr(src_cell.alignment, "wrap_text", None)):
+                    dst_cell.alignment = _safe_copy(src_cell.alignment, src_cell.alignment)
+            except Exception:
+                pass
 
         wb_out = openpyxl.Workbook()
         wb_out.remove(wb_out.active)
         for sheet_name in self.sheet_names:
             sd = self.sheet_data[sheet_name]
-            merged_rows, row_types = merge_sheet_with_choices(
+            merged_rows, merged_keys, row_types, source_map = merge_sheet_with_choices(
                 sd["base_rows"], sd["local_rows"], sd["remote_rows"],
                 sd["base_ordered"], sd["local_ordered"], sd["remote_ordered"],
                 sd["max_col"], sheet_name
@@ -568,23 +658,46 @@ class MergeWindow:
             if not merged_rows and not sd["local_rows"] and not sd["remote_rows"]:
                 continue
             ws_out = wb_out.create_sheet(sheet_name)
+            ws_l = wb_l[sheet_name] if sheet_name in wb_l.sheetnames else None
+            ws_r = wb_r[sheet_name] if sheet_name in wb_r.sheetnames else None
+            key_to_row_l = sd.get("key_to_row_l") or {}
+            key_to_row_r = sd.get("key_to_row_r") or {}
+
             for r, row_list in enumerate(merged_rows, start=1):
-                key_str = _core._cell_str(row_list[0]) if row_list else ""
-                rtype = row_types.get(key_str) or ""
-                fill = None
-                if rtype == "新增":
-                    fill = green_fill
-                elif rtype == "修改":
-                    fill = yellow_fill
-                elif rtype == "冲突":
-                    fill = red_fill
+                key = merged_keys[r - 1] if r <= len(merged_keys) else (_core._cell_str(row_list[0]) if row_list else "")
+                rtype = row_types.get(key) or ""
+                fill = green_fill if rtype == "新增" else (yellow_fill if rtype == "修改" else (red_fill if rtype == "冲突" else None))
+                src_ws = None
+                src_row_idx = None
+                if source_map.get(key) == "local" and ws_l and key in key_to_row_l:
+                    src_ws, src_row_idx = ws_l, key_to_row_l[key]
+                elif source_map.get(key) == "remote" and ws_r and key in key_to_row_r:
+                    src_ws, src_row_idx = ws_r, key_to_row_r[key]
+                elif ws_l and key in key_to_row_l:
+                    src_ws, src_row_idx = ws_l, key_to_row_l[key]
+                elif ws_r and key in key_to_row_r:
+                    src_ws, src_row_idx = ws_r, key_to_row_r[key]
+
                 for c, val in enumerate(row_list, start=1):
                     cell = ws_out.cell(row=r, column=c, value=val)
+                    if src_ws is not None and src_row_idx is not None:
+                        copy_cell_style(src_ws.cell(row=src_row_idx, column=c), cell)
                     if rtype and fill:
                         cell.fill = fill
                     if rtype == "冲突":
                         cell.font = red_font
 
+                if src_ws is not None and src_row_idx is not None and src_ws.row_dimensions[src_row_idx].height is not None:
+                    ws_out.row_dimensions[r].height = src_ws.row_dimensions[src_row_idx].height
+
+            if ws_l is not None:
+                for col_idx in range(1, sd["max_col"] + 1):
+                    letter = get_column_letter(col_idx)
+                    if letter in ws_l.column_dimensions and ws_l.column_dimensions[letter].width is not None:
+                        ws_out.column_dimensions[letter].width = ws_l.column_dimensions[letter].width
+
+        wb_l.close()
+        wb_r.close()
         if not wb_out.sheetnames:
             wb_out.create_sheet("Data")
         os.makedirs(os.path.dirname(self.path_merged) or ".", exist_ok=True)

@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 chcp 65001 >nul
 cd /d "%~dp0"
 
@@ -34,17 +35,27 @@ copy /Y dist\ExcelMergeFork.exe ExcelMergeFork.exe >nul
 echo 已生成 ExcelMergeFork.exe
 echo.
 
-echo [4/4] 快速验证测试...
-if not exist TestData\base.xlsx (
-    python TestData\gen_test_data.py
-)
-ExcelMergeFork.exe TestData\local.xlsx TestData\base.xlsx TestData\remote.xlsx TestData\_output\merged.xlsx
-if %ERRORLEVEL% equ 0 (
-    echo 合并测试通过
-    ExcelMergeFork.exe TestData\local.xlsx TestData\remote.xlsx
-    if %ERRORLEVEL% equ 0 echo 对比测试通过
+REM 传参 no-test / 0 / skip 时跳过快速验证；无参或其它参数则执行验证
+set "RUN_TEST=1"
+if /i "%1"=="no-test" set "RUN_TEST=0"
+if /i "%1"=="0" set "RUN_TEST=0"
+if /i "%1"=="skip" set "RUN_TEST=0"
+
+if "%RUN_TEST%"=="1" (
+    echo [4/4] 快速验证测试...
+    if not exist TestData\base.xlsx (
+        python TestData\gen_test_data.py
+    )
+    ExcelMergeFork.exe TestData\local.xlsx TestData\base.xlsx TestData\remote.xlsx TestData\_output\merged.xlsx
+    if !ERRORLEVEL! equ 0 (
+        echo 合并测试通过
+        ExcelMergeFork.exe TestData\local.xlsx TestData\remote.xlsx
+        if !ERRORLEVEL! equ 0 echo 对比测试通过
+    ) else (
+        echo WARNING: exe 测试失败，请检查
+    )
 ) else (
-    echo WARNING: exe 测试失败，请检查
+    echo [4/4] 已跳过快速验证（传参 no-test/0/skip）
 )
 
 echo.

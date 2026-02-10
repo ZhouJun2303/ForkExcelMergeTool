@@ -85,6 +85,76 @@ def _load_sheet_rows(ws, max_col=None):
     return rows
 
 
+def _get_merged_cell_value(ws, row, col):
+    """若 (row,col) 在合并区域内，返回该区域左上角的值，否则返回该格子的值（用于避免合并格只读左上导致其它格为 None）"""
+    try:
+        for rng in ws.merged_cells.ranges:
+            if rng.min_row <= row <= rng.max_row and rng.min_col <= col <= rng.max_col:
+                return ws.cell(row=rng.min_row, column=rng.min_col).value
+    except Exception:
+        pass
+    return ws.cell(row=row, column=col).value
+
+
+def _load_sheet_rows_full(ws, max_col=None):
+    """加载 Sheet 所有行（不跳过首列空行，表头会保留）；合并单元格会取区域左上角的值填满整区域，避免第一列“消失”"""
+    if ws is None:
+        return [], []
+    rows = []
+    row_indices = []
+    if max_col is None:
+        max_col = ws.max_column or 1
+    for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_col=max_col, values_only=True), start=1):
+        row_list = list(row) if row else []
+        while len(row_list) < max_col:
+            row_list.append("")
+        rows.append(row_list)
+        row_indices.append(row_idx)
+    # 合并单元格：openpyxl 只在左上格有值，其余为 None。把首列（及每列）在合并区内的空值用区域左上角补齐，避免“第一列没有了”
+    try:
+        for i in range(len(rows)):
+            for col in range(max_col):
+                cur = rows[i][col]
+                if cur is None or (isinstance(cur, str) and cur.strip() == ""):
+                    v = _get_merged_cell_value(ws, row_indices[i], col + 1)
+                    if v is not None:
+                        rows[i][col] = v
+    except Exception:
+        pass
+    return rows, row_indices
+
+
+def _rows_to_dict_with_indices(rows, row_indices):
+    """从 (rows, row_indices) 建 dict 和 key->行号；首列空的行 key 为 __row_N（N 为 1-based 行号）"""
+    d = {}
+    key_to_row_index = {}
+    for i, r in enumerate(rows):
+        if i >= len(row_indices):
+            break
+        k = _cell_str(r[0]) if r else ""
+        if not k:
+            k = "__row_%d" % row_indices[i]
+        d[k] = r
+        key_to_row_index[k] = row_indices[i]
+    return d, key_to_row_index
+
+
+def _ordered_keys_from_rows_and_indices(rows, row_indices):
+    """从 (rows, row_indices) 按行顺序得到 key 列表（首列空用 __row_N）"""
+    keys = []
+    seen = set()
+    for i, r in enumerate(rows):
+        if i >= len(row_indices):
+            break
+        k = _cell_str(r[0]) if r else ""
+        if not k:
+            k = "__row_%d" % row_indices[i]
+        if k not in seen:
+            seen.add(k)
+            keys.append(k)
+    return keys
+
+
 def _rows_to_dict(rows):
     """按第一列 key 转为 dict[key] = row_list"""
     d = {}
@@ -222,7 +292,12 @@ def _do_merge(path_local, path_base, path_remote, path_merged):
         ws_base = wb_base[sheet_name] if sheet_name in wb_base.sheetnames else None
         ws_remote = wb_remote[sheet_name] if sheet_name in wb_remote.sheetnames else None
 
-        max_col = 1
+        # 用三份表的最大列数统一加载，避免列数少的一方“截断”列数多的一方，导致合并后少列、格式错乱
+        max_col = max(
+            (ws_local.max_column or 1) if ws_local else 1,
+            (ws_base.max_column or 1) if ws_base else 1,
+            (ws_remote.max_column or 1) if ws_remote else 1,
+        )
         base_rows = {}
         local_rows = {}
         remote_rows = {}
@@ -231,10 +306,9 @@ def _do_merge(path_local, path_base, path_remote, path_merged):
         remote_ordered = []
 
         if ws_local:
-            rows = _load_sheet_rows(ws_local)
+            rows = _load_sheet_rows(ws_local, max_col)
             local_rows = _rows_to_dict(rows)
             local_ordered = _ordered_keys(rows)
-            max_col = max(max_col, max(len(r) for r in rows) if rows else 1)
         if ws_base:
             rows = _load_sheet_rows(ws_base, max_col)
             base_rows = _rows_to_dict(rows)
@@ -243,7 +317,6 @@ def _do_merge(path_local, path_base, path_remote, path_merged):
             rows = _load_sheet_rows(ws_remote, max_col)
             remote_rows = _rows_to_dict(rows)
             remote_ordered = _ordered_keys(rows)
-            max_col = max(max_col, max(len(r) for r in rows) if rows else 1)
 
         merged_rows, row_types = _merge_sheet(
             base_rows, local_rows, remote_rows,
