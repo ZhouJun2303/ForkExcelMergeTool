@@ -1,9 +1,10 @@
 {
-  "A": true,
+  "A": false,
   "B": false,
   "C": true,
   "D": true,
   "E": true,
   "F": true,
-  "G": false
+  "G": false,
+  "auto_open_merged": true
 }

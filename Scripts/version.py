@@ -5,6 +5,6 @@
 """
 
 VERSION_MAJOR = 2
-VERSION_MINOR = 19
+VERSION_MINOR = 26
 
 __version__ = "%d.%d" % (VERSION_MAJOR, VERSION_MINOR)

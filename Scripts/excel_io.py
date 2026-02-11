@@ -297,6 +297,11 @@ def merge_ordered_with_new_rows(base_ordered, new_ordered_keys):
 # 表头与列（用于新增列插入与冲突列）
 # -----------------------------------------------------------------------------
 
+def header_normalize_for_compare(s):
+    """列表头比较用：strip + 小写，避免「齿轮ID」与「齿轮Id」被当成两列而重复插入。"""
+    return (s or "").strip().lower()
+
+
 def load_sheet_header(ws, max_col=None):
     """
     加载 Sheet 第一行作为表头，返回列 key 列表（cell_str）。

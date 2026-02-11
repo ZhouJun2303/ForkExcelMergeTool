@@ -16,10 +16,13 @@ from config import BACKUP_SUBDIR
 from conflict import compute_conflicts_d
 from excel_io import (
     get_sheet_names,
+    header_normalize_for_compare,
     key_str_normalized,
     load_sheet_header,
     load_sheet_rows,
+    load_sheet_rows_full,
     ordered_keys,
+    ordered_keys_normalized,
     rows_to_dict,
 )
 from version import __version__ as APP_VERSION
@@ -58,6 +61,36 @@ def _save_merge_options(opts):
         if path:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(opts, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _load_auto_open_merged():
+    """从 merge_options.json 读取「合并后自动打开」是否勾选，默认 True。"""
+    try:
+        path = merge_options_path()
+        if path and os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return bool(data.get("auto_open_merged", True))
+    except Exception:
+        pass
+    return True
+
+
+def _save_auto_open_merged(value):
+    """将「合并后自动打开」写入本地，与 merge_options.json 合并。"""
+    try:
+        path = merge_options_path()
+        if not path:
+            return
+        data = {}
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        data["auto_open_merged"] = bool(value)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
 
@@ -119,6 +152,11 @@ class MergeWindow:
         btn_row.pack(fill=tk.X, pady=(8, 0))
         self.btn_merge = ttk.Button(btn_row, text="生成合并结果", command=self._on_generate_merge, style="Accent.TButton")
         self.btn_merge.pack(side=tk.LEFT, padx=(0, 8))
+        self.auto_open_var = tk.BooleanVar(value=_load_auto_open_merged())
+        ttk.Checkbutton(
+            btn_row, text="合并后自动打开", variable=self.auto_open_var,
+            command=lambda: _save_auto_open_merged(self.auto_open_var.get()),
+        ).pack(side=tk.LEFT, padx=(0, 12))
         self.btn_open_merged = ttk.Button(btn_row, text="打开合并结果", command=self._on_open_merged)
         self.btn_open_merged.pack(side=tk.LEFT, padx=8)
         self.btn_open_backup_merged = ttk.Button(btn_row, text="打开备份的合并文件", command=self._on_open_backup_merged)
@@ -227,7 +265,7 @@ class MergeWindow:
             self.hint_label.config(text="加载失败: " + str(e) + " 详见日志。")
 
     def _fill_content_by_options(self, options, base_side):
-        """根据勾选项 C/D/E/F/G 填充表格：删除行/列、新增Sheet、删除Sheet、冲突列表。"""
+        """根据勾选项填充表格：A 未选则显示将新增行，B 未选则显示将新增列，C/D/E/F/G 显示删除行/列、Sheet、冲突。基准切换后删除↔新增对称。"""
         wb_base = openpyxl.load_workbook(
             self.path_local if base_side == "local" else self.path_remote,
             data_only=True,
@@ -239,30 +277,56 @@ class MergeWindow:
         base_sheets = set(get_sheet_names(wb_base))
         other_sheets = get_sheet_names(wb_other)
         total = 0
-        if "C" in options:
-            for sheet_name in get_sheet_names(wb_base):
-                if sheet_name not in wb_base.sheetnames or sheet_name not in wb_other.sheetnames:
-                    continue
+        sheet_names_common = [n for n in get_sheet_names(wb_base) if n in wb_base.sheetnames and n in wb_other.sheetnames]
+        if "A" not in options:
+            for sheet_name in sheet_names_common:
                 ws_b = wb_base[sheet_name]
                 ws_o = wb_other[sheet_name]
                 max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
-                base_keys = set(rows_to_dict(load_sheet_rows(ws_b, max_col)))
-                other_keys = set(rows_to_dict(load_sheet_rows(ws_o, max_col)))
+                rows_b, _ = load_sheet_rows_full(ws_b, max_col)
+                rows_o, _ = load_sheet_rows_full(ws_o, max_col)
+                base_keys = set(key_str_normalized(r[0]) if r else "" for r in rows_b)
+                base_keys.discard("")
+                other_ordered = ordered_keys_normalized(rows_o)
+                for k in other_ordered:
+                    if k not in base_keys:
+                        self.tree.insert("", tk.END, values=(sheet_name, k, "（将新增行）"))
+                        total += 1
+        if "C" in options:
+            for sheet_name in sheet_names_common:
+                ws_b = wb_base[sheet_name]
+                ws_o = wb_other[sheet_name]
+                max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
+                rows_b, _ = load_sheet_rows_full(ws_b, max_col)
+                rows_o, _ = load_sheet_rows_full(ws_o, max_col)
+                base_keys = set(key_str_normalized(r[0]) if r else "" for r in rows_b)
+                base_keys.discard("")
+                other_keys = set(key_str_normalized(r[0]) if r else "" for r in rows_o)
+                other_keys.discard("")
                 for k in base_keys:
                     if k not in other_keys:
                         self.tree.insert("", tk.END, values=(sheet_name, k, "（将删除行）"))
                         total += 1
-        if "D" in options:
-            for sheet_name in get_sheet_names(wb_base):
-                if sheet_name not in wb_base.sheetnames or sheet_name not in wb_other.sheetnames:
-                    continue
+        if "B" not in options:
+            for sheet_name in sheet_names_common:
                 ws_b = wb_base[sheet_name]
                 ws_o = wb_other[sheet_name]
                 max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
-                header_b = set(load_sheet_header(ws_b, max_col))
-                header_o = set(load_sheet_header(ws_o, max_col))
+                header_b_norm = set(header_normalize_for_compare(h) for h in load_sheet_header(ws_b, max_col) if h)
+                header_o = load_sheet_header(ws_o, max_col)
+                for h in header_o:
+                    if h and header_normalize_for_compare(h) not in header_b_norm:
+                        self.tree.insert("", tk.END, values=(sheet_name, h, "（将新增列）"))
+                        total += 1
+        if "D" in options:
+            for sheet_name in sheet_names_common:
+                ws_b = wb_base[sheet_name]
+                ws_o = wb_other[sheet_name]
+                max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
+                header_o_norm = set(header_normalize_for_compare(h) for h in load_sheet_header(ws_o, max_col) if h)
+                header_b = load_sheet_header(ws_b, max_col)
                 for h in header_b:
-                    if h and h not in header_o:
+                    if h and header_normalize_for_compare(h) not in header_o_norm:
                         self.tree.insert("", tk.END, values=(sheet_name, h, "（将删除列）"))
                         total += 1
         if "E" in options:
@@ -291,7 +355,8 @@ class MergeWindow:
                 total += 1
         wb_base.close()
         wb_other.close()
-        self.hint_label.config(text="勾选参与项：%s。下列为将删除/新增/冲突项，共 %d 条。" % (", ".join(sorted(options)) or "无", total))
+        self.hint_label.config(text="基准=%s。勾选参与项：%s。下列为将新增/将删除/冲突项，共 %d 条。（切换基准后删除↔新增会互换）" % (
+            "本地" if base_side == "local" else "线上", ", ".join(sorted(options)) or "无", total))
         gui_log("已加载选项数据，共 %d 条" % total, self.status_var)
 
     def _fill_commit_info(self, parent, info):
@@ -351,6 +416,17 @@ class MergeWindow:
             messagebox.showwarning("提示", "无法打开备份文件")
 
     def _on_generate_merge(self):
+        path_out = os.path.normpath(os.path.abspath(self.path_merged))
+        if os.path.isfile(path_out):
+            try:
+                with open(path_out, "ab") as _:
+                    pass
+            except PermissionError:
+                messagebox.showerror(
+                    "无法写入合并结果",
+                    "合并结果文件正在被占用（如 Excel 已打开），请先关闭后再点击「生成合并结果」。"
+                )
+                return
         options = self._get_options()
         base_side = self._get_base_side()
         d_choices = []
@@ -377,14 +453,16 @@ class MergeWindow:
             base_name = os.path.splitext(os.path.basename(self.path_merged))[0]
             self._backup_merged_path = os.path.join(merged_dir, BACKUP_SUBDIR, base_name + "_merged.xlsx")
             gui_log("合并结果已生成：%s" % self._merged_file_path, self.status_var)
-            messagebox.showinfo(
-                "完成",
-                "合并结果已保存。可点「打开合并结果」查看，确认无误后点击「确认无误并解决冲突」。"
-            )
-            self.btn_merge.config(state=tk.DISABLED)
+            _save_auto_open_merged(self.auto_open_var.get())
             self.btn_confirm.config(state=tk.NORMAL)
-            if os.path.isfile(self._merged_file_path):
+            if self.auto_open_var.get() and os.path.isfile(self._merged_file_path):
                 open_excel_file(self._merged_file_path)
+        except PermissionError as e:
+            gui_log("合并失败（文件可能被占用）: " + str(e), self.status_var, is_error=True)
+            messagebox.showerror(
+                "无法写入合并结果",
+                "合并结果文件可能正在被 Excel 打开，请先关闭该文件后再点击「生成合并结果」。"
+            )
         except Exception as e:
             import traceback
             gui_log("合并失败: " + str(e), self.status_var, is_error=True)

@@ -2,21 +2,25 @@
 """
 多模式合并核心（A 新增行 / B 新增列 / C 新增 Sheet / D 冲突选择 / E 智能）。
 给定 LOCAL、BASE、REMOTE、MERGED 路径，按 mode 与 base_side 执行合并并写入 MERGED，可选备份。
-A/B/C 仅用 LOCAL 与 REMOTE（base_side 指定基准）；D 可用 BASE 做三向冲突；E 顺序执行 A→B→C→D。
+合并时尽量保留基准表的行高、列宽、单元格样式（颜色/字体等）与顺序。
 """
 
 import os
 import shutil
 import sys
+from copy import copy
 
 import openpyxl
 from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 
 from config import BACKUP_SUBDIR
 from excel_io import (
     cell_str,
+    get_merged_cell_value,
     get_sheet_names,
     get_column_values,
+    header_normalize_for_compare,
     key_str_normalized,
     load_sheet_header,
     load_sheet_rows,
@@ -30,6 +34,121 @@ from excel_io import (
     rows_to_dict_normalized,
 )
 from log_util import log
+
+
+# ---------------------------------------------------------------------------
+# 复制单元格样式与行高/列宽（保留原表格式）
+# ---------------------------------------------------------------------------
+
+def _copy_cell_style(src_cell, dst_cell):
+    """将 src 单元格的样式复制到 dst，不复制 value（由调用方赋值）。"""
+    if src_cell.has_style:
+        if src_cell.font:
+            dst_cell.font = copy(src_cell.font)
+        if src_cell.border:
+            dst_cell.border = copy(src_cell.border)
+        if src_cell.fill:
+            dst_cell.fill = copy(src_cell.fill)
+        if src_cell.number_format:
+            dst_cell.number_format = copy(src_cell.number_format)
+        if src_cell.alignment:
+            dst_cell.alignment = copy(src_cell.alignment)
+        if src_cell.protection:
+            dst_cell.protection = copy(src_cell.protection)
+
+
+def _copy_row_with_style(ws_src, ws_dst, row_src, row_dst, max_col):
+    """将 ws_src 的 row_src 行（值+样式）复制到 ws_dst 的 row_dst 行。合并格取区域左上角值。"""
+    for c in range(1, max_col + 1):
+        src_c = ws_src.cell(row=row_src, column=c)
+        val = get_merged_cell_value(ws_src, row_src, c)
+        dst_c = ws_dst.cell(row=row_dst, column=c, value=val)
+        _copy_cell_style(src_c, dst_c)
+    if row_src in ws_src.row_dimensions and ws_src.row_dimensions[row_src].height is not None:
+        ws_dst.row_dimensions[row_dst].height = ws_src.row_dimensions[row_src].height
+
+
+def _copy_col_with_style(ws_src, ws_dst, col_src, col_dst, max_row):
+    """将 ws_src 的 col_src 列（值+样式）复制到 ws_dst 的 col_dst 列。合并格取区域左上角值。"""
+    for r in range(1, max_row + 1):
+        src_c = ws_src.cell(row=r, column=col_src)
+        val = get_merged_cell_value(ws_src, r, col_src)
+        dst_c = ws_dst.cell(row=r, column=col_dst, value=val)
+        _copy_cell_style(src_c, dst_c)
+    letter_src = get_column_letter(col_src)
+    letter_dst = get_column_letter(col_dst)
+    if letter_src in ws_src.column_dimensions and ws_src.column_dimensions[letter_src].width is not None:
+        ws_dst.column_dimensions[letter_dst].width = ws_src.column_dimensions[letter_src].width
+
+
+def _copy_merged_cells(ws_src, ws_dst):
+    """将 ws_src 的合并单元格范围原样复制到 ws_dst（相同行列坐标）。"""
+    try:
+        for rng in list(ws_src.merged_cells.ranges):
+            ws_dst.merge_cells(
+                start_row=rng.min_row, start_column=rng.min_col,
+                end_row=rng.max_row, end_column=rng.max_col,
+            )
+    except Exception:
+        pass
+
+
+def _shift_merged_cells_after_insert_rows(ws, insert_at_row, amount=1):
+    """在 insert_at_row 处插入了 amount 行后，更新 ws 中受影响的合并范围（下移）。"""
+    try:
+        to_reapply = []
+        for rng in list(ws.merged_cells.ranges):
+            if rng.max_row >= insert_at_row:
+                new_min_r = rng.min_row + amount if rng.min_row >= insert_at_row else rng.min_row
+                new_max_r = rng.max_row + amount
+                to_reapply.append((str(rng), new_min_r, rng.min_col, new_max_r, rng.max_col))
+        for old_ref, nr, nc, xr, xc in to_reapply:
+            ws.unmerge_cells(old_ref)
+            ws.merge_cells(start_row=nr, start_column=nc, end_row=xr, end_column=xc)
+    except Exception:
+        pass
+
+
+def _shift_merged_cells_after_insert_cols(ws, insert_at_col, amount=1):
+    """在 insert_at_col 处插入了 amount 列后，更新 ws 中受影响的合并范围（右移）。"""
+    try:
+        to_reapply = []
+        for rng in list(ws.merged_cells.ranges):
+            if rng.max_col >= insert_at_col:
+                new_min_c = rng.min_col + amount if rng.min_col >= insert_at_col else rng.min_col
+                new_max_c = rng.max_col + amount
+                to_reapply.append((str(rng), rng.min_row, new_min_c, rng.max_row, new_max_c))
+        for old_ref, nr, nc, xr, xc in to_reapply:
+            ws.unmerge_cells(old_ref)
+            ws.merge_cells(start_row=nr, start_column=nc, end_row=xr, end_column=xc)
+    except Exception:
+        pass
+
+
+def _copy_row_merged_ranges_to(ws_src, row_src, ws_dst, row_dst):
+    """把 ws_src 中与 row_src 相交的合并范围，在 ws_dst 的 row_dst 行上按列宽合并。"""
+    try:
+        for rng in list(ws_src.merged_cells.ranges):
+            if rng.min_row <= row_src <= rng.max_row and rng.min_col < rng.max_col:
+                ws_dst.merge_cells(
+                    start_row=row_dst, start_column=rng.min_col,
+                    end_row=row_dst, end_column=rng.max_col,
+                )
+    except Exception:
+        pass
+
+
+def _copy_col_merged_ranges_to(ws_src, col_src, ws_dst, col_dst):
+    """把 ws_src 中与 col_src 相交的合并范围，在 ws_dst 的 col_dst 列上按行高合并。"""
+    try:
+        for rng in list(ws_src.merged_cells.ranges):
+            if rng.min_col <= col_src <= rng.max_col and rng.min_row < rng.max_row:
+                ws_dst.merge_cells(
+                    start_row=rng.min_row, start_column=col_dst,
+                    end_row=rng.max_row, end_column=col_dst,
+                )
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -204,9 +323,9 @@ def _merge_mode_b_impl(path_base_side, path_other_side, path_merged, base_side):
 # ---------------------------------------------------------------------------
 
 def _merge_mode_c_impl(path_base_side, path_other_side, path_merged, base_side):
-    """以 base_side 为基准，将 other 中多出的 Sheet 整表复制追加，写入 path_merged。"""
-    wb_base = openpyxl.load_workbook(path_base_side, data_only=True)
-    wb_other = openpyxl.load_workbook(path_other_side, data_only=True)
+    """以 base_side 为基准，将 other 中多出的 Sheet 整表复制追加，保留格式。"""
+    wb_base = openpyxl.load_workbook(path_base_side, data_only=False)
+    wb_other = openpyxl.load_workbook(path_other_side, data_only=False)
 
     base_sheets = set(get_sheet_names(wb_base))
     other_sheets = get_sheet_names(wb_other)
@@ -219,13 +338,29 @@ def _merge_mode_c_impl(path_base_side, path_other_side, path_merged, base_side):
         ws_new = wb_out.create_sheet(name)
         for r in ws.iter_rows():
             for c in r:
-                ws_new.cell(row=c.row, column=c.column, value=c.value)
+                dst = ws_new.cell(row=c.row, column=c.column, value=c.value)
+                _copy_cell_style(c, dst)
+        for r in ws.row_dimensions:
+            if ws.row_dimensions[r].height is not None:
+                ws_new.row_dimensions[r].height = ws.row_dimensions[r].height
+        for c in ws.column_dimensions:
+            if ws.column_dimensions[c].width is not None:
+                ws_new.column_dimensions[c].width = ws.column_dimensions[c].width
+        _copy_merged_cells(ws, ws_new)
     for name in new_sheets:
         ws = wb_other[name]
         ws_new = wb_out.create_sheet(name)
         for r in ws.iter_rows():
             for c in r:
-                ws_new.cell(row=c.row, column=c.column, value=c.value)
+                dst = ws_new.cell(row=c.row, column=c.column, value=c.value)
+                _copy_cell_style(c, dst)
+        for r in ws.row_dimensions:
+            if ws.row_dimensions[r].height is not None:
+                ws_new.row_dimensions[r].height = ws.row_dimensions[r].height
+        for c in ws.column_dimensions:
+            if ws.column_dimensions[c].width is not None:
+                ws_new.column_dimensions[c].width = ws.column_dimensions[c].width
+        _copy_merged_cells(ws, ws_new)
 
     wb_base.close()
     wb_other.close()
@@ -262,15 +397,8 @@ def _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choice
 
     wb_local = openpyxl.load_workbook(path_local, data_only=False)
     wb_remote = openpyxl.load_workbook(path_remote, data_only=False)
-    font_modified = Font(color="CC6600")
-    font_conflict = Font(color="CC0000", bold=True)
 
     sheet_names = list(wb_out.sheetnames)
-
-    choice_map = {}
-    for item in d_choices or []:
-        key = (item.get("sheet"), item.get("key"), item.get("kind"))
-        choice_map[key] = item.get("choice", "local")
 
     for item in d_choices or []:
         sheet_name = item.get("sheet")
@@ -304,9 +432,9 @@ def _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choice
             if not source:
                 continue
             for c in range(1, max_col + 1):
-                val = source.cell(row=row_idx, column=c).value
-                ws_out.cell(row=row_idx, column=c, value=val)
-                ws_out.cell(row=row_idx, column=c).font = font_modified
+                src_c = source.cell(row=row_idx, column=c)
+                dst_c = ws_out.cell(row=row_idx, column=c, value=src_c.value)
+                _copy_cell_style(src_c, dst_c)
         else:
             header_l = load_sheet_header(ws_l, max_col) if ws_l else []
             header_r = load_sheet_header(ws_r, max_col) if ws_r else []
@@ -325,9 +453,9 @@ def _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choice
             if col_idx is None or not source:
                 continue
             for r in range(1, max_row + 1):
-                val = source.cell(row=r, column=col_idx).value
-                ws_out.cell(row=r, column=col_idx, value=val)
-                ws_out.cell(row=r, column=col_idx).font = font_modified
+                src_c = source.cell(row=r, column=col_idx)
+                dst_c = ws_out.cell(row=r, column=col_idx, value=src_c.value)
+                _copy_cell_style(src_c, dst_c)
 
     wb_local.close()
     wb_remote.close()
@@ -427,12 +555,11 @@ def _merge_delete_cols_impl(path_in, path_other_side, path_out):
         max_col = max(ws_in.max_column or 1, ws_o.max_column or 1)
         header_in = load_sheet_header(ws_in, max_col)
         header_o = load_sheet_header(ws_o, max_col)
-        keys_other = set(key_str_normalized(h) for h in header_o if h)
+        keys_other_norm = set(header_normalize_for_compare(h) for h in header_o if h)
         to_delete = []
         for c in range(len(header_in) - 1, -1, -1):
             h = header_in[c] if c < len(header_in) else ""
-            k = key_str_normalized(h) if h else ""
-            if k and k not in keys_other:
+            if h and header_normalize_for_compare(h) not in keys_other_norm:
                 to_delete.append(c + 1)
         for col_idx in sorted(to_delete, reverse=True):
             ws_in.delete_cols(col_idx, 1)
@@ -464,6 +591,110 @@ def _merge_delete_sheets_impl(path_in, path_other_side, path_out):
 # 按选项集合执行管道（A 不变=不增行 B 不变=不增列 C 删除行 D 删除列 E 新增Sheet F 删除Sheet G 冲突）
 # ---------------------------------------------------------------------------
 
+def _merge_mode_a_preserve_format(path_in, path_other_side, path_out, base_side):
+    """在基准副本 path_in 上插入另一侧新增行，保留行高与单元格样式，写入 path_out。"""
+    wb_in = openpyxl.load_workbook(path_in, data_only=False)
+    wb_other = openpyxl.load_workbook(path_other_side, data_only=False)
+    for sheet_name in list(wb_in.sheetnames):
+        if sheet_name not in wb_other.sheetnames:
+            continue
+        ws_in = wb_in[sheet_name]
+        ws_o = wb_other[sheet_name]
+        max_col = max(ws_in.max_column or 1, ws_o.max_column or 1)
+        rows_in, idx_in = load_sheet_rows_full(ws_in, max_col)
+        rows_o, idx_o = load_sheet_rows_full(ws_o, max_col)
+        base_keys = set(key_str_normalized(r[0]) if r else "" for r in rows_in)
+        base_keys.discard("")
+        key_to_row_in = {}
+        for i, r in enumerate(rows_in):
+            k = key_str_normalized(r[0]) if r else ""
+            if k and i < len(idx_in):
+                key_to_row_in[k] = idx_in[i]
+        base_ordered = ordered_keys_normalized(rows_in)
+        other_ordered = ordered_keys_normalized(rows_o)
+        new_keys = [k for k in other_ordered if k not in base_keys]
+        merged_ordered = merge_ordered_with_new_rows(base_ordered, new_keys)
+        # 每个 key 可能对应多行（首列非唯一），按行顺序保存所有行号
+        key_to_rows_other = {}
+        for i, r in enumerate(rows_o):
+            k = key_str_normalized(r[0]) if r else ""
+            if k and i < len(idx_o):
+                key_to_rows_other.setdefault(k, []).append(idx_o[i])
+        last_base_row = None
+        inserts = []
+        for k in merged_ordered:
+            if k in key_to_row_in:
+                last_base_row = key_to_row_in[k]
+            elif k in key_to_rows_other:
+                # 新增 key 排在首行前时 last_base_row 为 None，用 0 表示插在表头后（第 1 行）
+                insert_after = (last_base_row if last_base_row is not None else 0)
+                inserts.append((insert_after, k))
+        for insert_after, new_key in sorted(inserts, key=lambda x: -x[0]):
+            other_rows = key_to_rows_other[new_key]
+            # 从下往上插入，保证顺序：先插最后一行到 insert_after+1，再插倒数第二行到 insert_after+1，…
+            for i in range(len(other_rows) - 1, -1, -1):
+                other_row = other_rows[i]
+                ws_in.insert_rows(insert_after + 1, 1)
+                _shift_merged_cells_after_insert_rows(ws_in, insert_after + 1, 1)
+                _copy_row_with_style(ws_o, ws_in, other_row, insert_after + 1, max_col)
+                _copy_row_merged_ranges_to(ws_o, other_row, ws_in, insert_after + 1)
+    wb_other.close()
+    os.makedirs(os.path.dirname(os.path.abspath(path_out)) or ".", exist_ok=True)
+    wb_in.save(path_out)
+    wb_in.close()
+    log("[Option A] 新增行插入（保留格式）完成 %s" % path_out)
+
+
+def _merge_mode_b_preserve_format(path_in, path_other_side, path_out, base_side):
+    """在基准副本 path_in 上插入另一侧新增列，保留列宽与单元格样式，写入 path_out。"""
+    wb_in = openpyxl.load_workbook(path_in, data_only=False)
+    wb_other = openpyxl.load_workbook(path_other_side, data_only=False)
+    for sheet_name in list(wb_in.sheetnames):
+        if sheet_name not in wb_other.sheetnames:
+            continue
+        ws_in = wb_in[sheet_name]
+        ws_o = wb_other[sheet_name]
+        max_col_in = ws_in.max_column or 1
+        max_col_o = ws_o.max_column or 1
+        max_col = max(max_col_in, max_col_o)
+        header_in = load_sheet_header(ws_in, max_col)
+        header_o = load_sheet_header(ws_o, max_col)
+        base_set_norm = set(header_normalize_for_compare(h) for h in header_in if h)
+        other_ordered = [h for h in header_o if h]
+        new_cols = [h for h in other_ordered if header_normalize_for_compare(h) not in base_set_norm]
+        merged_col_order = merge_ordered_with_new_cols([h for h in header_in if h], new_cols)
+        col_to_idx_o = {}
+        for i, h in enumerate(header_o):
+            if h:
+                col_to_idx_o[h] = i + 1
+        last_base_col = None
+        inserts = []
+        for h in merged_col_order:
+            idx_in = None
+            for i, x in enumerate(header_in):
+                if x == h or header_normalize_for_compare(x) == header_normalize_for_compare(h):
+                    idx_in = i + 1
+                    break
+            if idx_in is not None:
+                last_base_col = idx_in
+            elif h in col_to_idx_o:
+                # 新增列排在首列前时 last_base_col 为 None，用 0 表示插在第 1 列前
+                insert_after = (last_base_col if last_base_col is not None else 0)
+                inserts.append((insert_after, h))
+        max_row = max(ws_in.max_row or 1, ws_o.max_row or 1)
+        for insert_after, col_key in sorted(inserts, key=lambda x: -x[0]):
+            col_o = col_to_idx_o[col_key]
+            ws_in.insert_cols(insert_after + 1, 1)
+            _shift_merged_cells_after_insert_cols(ws_in, insert_after + 1, 1)
+            _copy_col_with_style(ws_o, ws_in, col_o, insert_after + 1, max_row)
+            _copy_col_merged_ranges_to(ws_o, col_o, ws_in, insert_after + 1)
+    wb_other.close()
+    os.makedirs(os.path.dirname(os.path.abspath(path_out)) or ".", exist_ok=True)
+    wb_in.save(path_out)
+    wb_in.close()
+    log("[Option B] 新增列插入（保留格式）完成 %s" % path_out)
+
+
 def _do_merge_by_options(path_local, path_base, path_remote, path_merged, options, base_side, d_choices):
     options = set(options or [])
     path_base_side = path_local if base_side == "local" else path_remote
@@ -474,13 +705,13 @@ def _do_merge_by_options(path_local, path_base, path_remote, path_merged, option
     try:
         shutil.copy2(path_base_side, path_cur)
         if "A" not in options:
-            _merge_mode_a_impl(path_cur, path_other_side, path_cur + ".tmp", base_side)
+            _merge_mode_a_preserve_format(path_cur, path_other_side, path_cur + ".tmp", base_side)
             os.replace(path_cur + ".tmp", path_cur)
         if "C" in options:
             _merge_delete_rows_impl(path_cur, path_other_side, path_cur + ".tmp")
             os.replace(path_cur + ".tmp", path_cur)
         if "B" not in options:
-            _merge_mode_b_impl(path_cur, path_other_side, path_cur + ".tmp", base_side)
+            _merge_mode_b_preserve_format(path_cur, path_other_side, path_cur + ".tmp", base_side)
             os.replace(path_cur + ".tmp", path_cur)
         if "D" in options:
             _merge_delete_cols_impl(path_cur, path_other_side, path_cur + ".tmp")
