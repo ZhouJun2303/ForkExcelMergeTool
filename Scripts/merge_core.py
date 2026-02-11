@@ -431,10 +431,12 @@ def _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choice
             source = ws_r if choice == "remote" else ws_l
             if not source:
                 continue
+            _font_mod = Font(color="CC6600")
             for c in range(1, max_col + 1):
                 src_c = source.cell(row=row_idx, column=c)
                 dst_c = ws_out.cell(row=row_idx, column=c, value=src_c.value)
                 _copy_cell_style(src_c, dst_c)
+                dst_c.font = _font_mod
         else:
             header_l = load_sheet_header(ws_l, max_col) if ws_l else []
             header_r = load_sheet_header(ws_r, max_col) if ws_r else []
@@ -452,10 +454,12 @@ def _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choice
             source = ws_l if choice == "local" else ws_r
             if col_idx is None or not source:
                 continue
+            _font_mod = Font(color="CC6600")
             for r in range(1, max_row + 1):
                 src_c = source.cell(row=r, column=col_idx)
                 dst_c = ws_out.cell(row=r, column=col_idx, value=src_c.value)
                 _copy_cell_style(src_c, dst_c)
+                dst_c.font = _font_mod
 
     wb_local.close()
     wb_remote.close()

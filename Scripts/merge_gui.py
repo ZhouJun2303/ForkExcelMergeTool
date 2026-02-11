@@ -145,9 +145,6 @@ class MergeWindow:
         status_row = ttk.Frame(bottom_bar)
         status_row.pack(fill=tk.X)
         ttk.Label(status_row, textvariable=self.status_var, font=("Segoe UI", 9)).pack(side=tk.LEFT, anchor=tk.W)
-        _ver_frame = tk.Frame(status_row, bg="#f0f2f5")
-        _ver_frame.pack(side=tk.RIGHT)
-        tk.Label(_ver_frame, text="版本 v%s" % APP_VERSION, font=("Segoe UI", 9, "bold"), fg="#1877f2", bg="#f0f2f5").pack()
         btn_row = ttk.Frame(bottom_bar)
         btn_row.pack(fill=tk.X, pady=(8, 0))
         self.btn_merge = ttk.Button(btn_row, text="生成合并结果", command=self._on_generate_merge, style="Accent.TButton")
@@ -226,6 +223,9 @@ class MergeWindow:
         for c in cols:
             self.tree.heading(c, text=c)
             self.tree.column(c, width=120 if c != "Key / 说明" else 280)
+        self.tree.tag_configure("new", foreground="#008000", background="#E8F5E9")
+        self.tree.tag_configure("del", foreground="#CC6600", background="#FFF3E0")
+        self.tree.tag_configure("conflict", foreground="#CC0000", background="#FFEBEE")
         sb = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -290,7 +290,7 @@ class MergeWindow:
                 other_ordered = ordered_keys_normalized(rows_o)
                 for k in other_ordered:
                     if k not in base_keys:
-                        self.tree.insert("", tk.END, values=(sheet_name, k, "（将新增行）"))
+                        self.tree.insert("", tk.END, values=(sheet_name, k, "（将新增行）"), tags=("new",))
                         total += 1
         if "C" in options:
             for sheet_name in sheet_names_common:
@@ -305,7 +305,7 @@ class MergeWindow:
                 other_keys.discard("")
                 for k in base_keys:
                     if k not in other_keys:
-                        self.tree.insert("", tk.END, values=(sheet_name, k, "（将删除行）"))
+                        self.tree.insert("", tk.END, values=(sheet_name, k, "（将删除行）"), tags=("del",))
                         total += 1
         if "B" not in options:
             for sheet_name in sheet_names_common:
@@ -316,7 +316,7 @@ class MergeWindow:
                 header_o = load_sheet_header(ws_o, max_col)
                 for h in header_o:
                     if h and header_normalize_for_compare(h) not in header_b_norm:
-                        self.tree.insert("", tk.END, values=(sheet_name, h, "（将新增列）"))
+                        self.tree.insert("", tk.END, values=(sheet_name, h, "（将新增列）"), tags=("new",))
                         total += 1
         if "D" in options:
             for sheet_name in sheet_names_common:
@@ -327,17 +327,17 @@ class MergeWindow:
                 header_b = load_sheet_header(ws_b, max_col)
                 for h in header_b:
                     if h and header_normalize_for_compare(h) not in header_o_norm:
-                        self.tree.insert("", tk.END, values=(sheet_name, h, "（将删除列）"))
+                        self.tree.insert("", tk.END, values=(sheet_name, h, "（将删除列）"), tags=("del",))
                         total += 1
         if "E" in options:
             for name in other_sheets:
                 if name not in base_sheets and name in wb_other.sheetnames:
-                    self.tree.insert("", tk.END, values=(name, "（将新增 Sheet）", "—"))
+                    self.tree.insert("", tk.END, values=(name, "（将新增 Sheet）", "—"), tags=("new",))
                     total += 1
         if "F" in options:
             for name in base_sheets:
                 if name not in set(get_sheet_names(wb_other)):
-                    self.tree.insert("", tk.END, values=(name, "（将删除 Sheet）", "—"))
+                    self.tree.insert("", tk.END, values=(name, "（将删除 Sheet）", "—"), tags=("del",))
                     total += 1
         if "G" in options:
             self.conflict_rows, self.conflict_cols, _ = compute_conflicts_d(self.path_local, self.path_remote)
@@ -345,13 +345,13 @@ class MergeWindow:
                 var = tk.StringVar(value="本地")
                 idx = len(self.conflict_vars)
                 self.conflict_vars.append((var, c, "row"))
-                self.tree.insert("", tk.END, values=(c["sheet"], c["key"] + " (行)", "将保留本地"), tags=(str(idx),))
+                self.tree.insert("", tk.END, values=(c["sheet"], c["key"] + " (行)", "将保留本地"), tags=(str(idx), "conflict"))
                 total += 1
             for c in self.conflict_cols:
                 var = tk.StringVar(value="本地")
                 idx = len(self.conflict_vars)
                 self.conflict_vars.append((var, c, "column"))
-                self.tree.insert("", tk.END, values=(c["sheet"], c["key"] + " (列)", "将保留本地"), tags=(str(idx),))
+                self.tree.insert("", tk.END, values=(c["sheet"], c["key"] + " (列)", "将保留本地"), tags=(str(idx), "conflict"))
                 total += 1
         wb_base.close()
         wb_other.close()
