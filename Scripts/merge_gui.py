@@ -15,7 +15,9 @@ import openpyxl
 from config import BACKUP_SUBDIR
 from conflict import compute_conflicts_d
 from excel_io import (
+    cell_str,
     get_sheet_names,
+    get_column_values,
     header_normalize_for_compare,
     key_str_normalized,
     load_sheet_header,
@@ -241,6 +243,7 @@ class MergeWindow:
         self.tree.tag_configure("new", foreground="#008000", background="#E8F5E9")
         self.tree.tag_configure("del", foreground="#CC6600", background="#FFF3E0")
         self.tree.tag_configure("conflict", foreground="#CC0000", background="#FFEBEE")
+        self.tree.bind("<Double-1>", self._on_merge_tree_double_click)
         sb = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -531,6 +534,179 @@ class MergeWindow:
         vals = list(self.tree.item(item, "values"))
         vals[2] = display
         self.tree.item(item, values=vals)
+
+    def _on_merge_tree_double_click(self, event):
+        """双击列表行：打开详情面板，左右对比（本地 vs 线上）完整显示。"""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        item = sel[0]
+        vals = self.tree.item(item, "values")
+        tags = self.tree.item(item, "tags") or ()
+        if len(vals) < 3:
+            return
+        sheet_or_name, key_or_col, choice = vals[0], vals[1], vals[2]
+        if "conflict" in tags:
+            try:
+                idx = int(tags[0])
+            except (ValueError, IndexError):
+                return
+            if idx < 0 or idx >= len(self.conflict_vars):
+                return
+            var, c, kind = self.conflict_vars[idx]
+            if kind == "row":
+                left_vals = [cell_str(x) for x in c["local_row"]]
+                right_vals = [cell_str(x) for x in c["remote_row"]]
+                title = "冲突行 — %s / %s" % (c["sheet"], c["key"])
+            else:
+                left_vals = [cell_str(x) for x in c["local_col"]]
+                right_vals = [cell_str(x) for x in c["remote_col"]]
+                title = "冲突列 — %s / %s" % (c["sheet"], c["key"])
+            self._show_merge_detail_panel(title, "本地", "线上", left_vals, right_vals)
+            return
+        base_side = self._get_base_side()
+        if choice == "（将新增行）":
+            path_base = self.path_local if base_side == "local" else self.path_remote
+            path_other = self.path_remote if base_side == "local" else self.path_local
+            left_vals, right_vals = self._load_row_from_workbooks(sheet_or_name, key_or_col, path_base, path_other)
+            self._show_merge_detail_panel("将新增行 — %s / %s" % (sheet_or_name, key_or_col), "基准(无)", "另一方", left_vals, right_vals)
+        elif choice == "（将删除行）":
+            path_base = self.path_local if base_side == "local" else self.path_remote
+            path_other = self.path_remote if base_side == "local" else self.path_local
+            left_vals, right_vals = self._load_row_from_workbooks(sheet_or_name, key_or_col, path_base, path_other)
+            self._show_merge_detail_panel("将删除行 — %s / %s" % (sheet_or_name, key_or_col), "基准", "另一方(无)", left_vals, right_vals)
+        elif choice == "（将新增列）":
+            left_vals, right_vals = self._load_col_from_workbooks(
+                sheet_or_name, key_or_col, base_side, has_in_other=True
+            )
+            self._show_merge_detail_panel("将新增列 — %s / %s" % (sheet_or_name, key_or_col), "基准(无)", "另一方", left_vals, right_vals)
+        elif choice == "（将删除列）":
+            left_vals, right_vals = self._load_col_from_workbooks(
+                sheet_or_name, key_or_col, base_side, has_in_other=False
+            )
+            self._show_merge_detail_panel("将删除列 — %s / %s" % (sheet_or_name, key_or_col), "基准", "另一方(无)", left_vals, right_vals)
+        elif "将新增 Sheet" in choice or "将删除 Sheet" in choice:
+            messagebox.showinfo("详情", "Sheet: %s\n%s" % (sheet_or_name, choice))
+
+    def _load_row_from_workbooks(self, sheet_name, key, path_base, path_other):
+        """返回 (base_row_values, other_row_values)，缺失一方为空列表。"""
+        left, right = [], []
+        try:
+            wb_b = openpyxl.load_workbook(path_base, data_only=True)
+            wb_o = openpyxl.load_workbook(path_other, data_only=True)
+            if sheet_name in wb_b.sheetnames and sheet_name in wb_o.sheetnames:
+                ws_b = wb_b[sheet_name]
+                ws_o = wb_o[sheet_name]
+                max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
+                rows_b, _ = load_sheet_rows_full(ws_b, max_col)
+                rows_o, _ = load_sheet_rows_full(ws_o, max_col)
+                dict_b = rows_to_dict(rows_b)
+                dict_o = rows_to_dict(rows_o)
+                key_norm = key_str_normalized(key)
+                for d, out in [(dict_b, left), (dict_o, right)]:
+                    for k, row in d.items():
+                        if key_str_normalized(k) == key_norm or k == key:
+                            out.extend([cell_str(c) for c in row])
+                            break
+            wb_b.close()
+            wb_o.close()
+        except Exception:
+            pass
+        return (left, right)
+
+    def _load_col_from_workbooks(self, sheet_name, col_header, base_side, has_in_other):
+        """返回 (基准列值, 另一方列值)，即 (left_vals, right_vals)。基准=本地时 left 来自 local。"""
+        left, right = [], []
+        try:
+            wb_l = openpyxl.load_workbook(self.path_local, data_only=True)
+            wb_r = openpyxl.load_workbook(self.path_remote, data_only=True)
+            for wb, path_label in [(wb_l, "local"), (wb_r, "remote")]:
+                if sheet_name not in wb.sheetnames:
+                    continue
+                ws = wb[sheet_name]
+                max_col = ws.max_column or 1
+                max_row = max(ws.max_row or 1, 1)
+                headers = load_sheet_header(ws, max_col)
+                col_idx = None
+                for i, h in enumerate(headers):
+                    if h and header_normalize_for_compare(h) == header_normalize_for_compare(col_header):
+                        col_idx = i + 1
+                        break
+                if col_idx is None:
+                    continue
+                vals = get_column_values(ws, col_idx, max_row)
+                out = [cell_str(v) for v in vals]
+                if path_label == "local":
+                    left = out
+                else:
+                    right = out
+            wb_l.close()
+            wb_r.close()
+            # 基准为线上时，left 应为 remote、right 为 local
+            if base_side == "remote":
+                left, right = right, left
+        except Exception:
+            pass
+        return (left, right)
+
+    def _show_merge_detail_panel(self, title, label_left, label_right, left_vals, right_vals):
+        """弹出 Toplevel：左右两栏显示完整参数，每参数一行，双栏滚动同步。"""
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.minsize(640, 400)
+        win.geometry("900x500")
+        pad = 8
+        header = ttk.Frame(win, padding=(pad, pad))
+        header.pack(fill=tk.X)
+        ttk.Label(header, text=label_left, font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+        ttk.Label(header, text="  |  ", font=("Segoe UI", 10)).pack(side=tk.LEFT)
+        ttk.Label(header, text=label_right, font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+        paned = ttk.PanedWindow(win, orient=tk.HORIZONTAL)
+        paned.pack(fill=tk.BOTH, expand=True, padx=pad, pady=(0, pad))
+        n = max(len(left_vals), len(right_vals), 1)
+        lines_left = "\n".join("%d: %s" % (i + 1, (left_vals[i] if i < len(left_vals) else "")) for i in range(n))
+        lines_right = "\n".join("%d: %s" % (i + 1, (right_vals[i] if i < len(right_vals) else "")) for i in range(n))
+        f_a = ttk.Frame(paned)
+        f_b = ttk.Frame(paned)
+        paned.add(f_a, weight=1)
+        paned.add(f_b, weight=1)
+        txt_a = tk.Text(f_a, wrap=tk.WORD, font=("Consolas", 9), padx=6, pady=6)
+        txt_b = tk.Text(f_b, wrap=tk.WORD, font=("Consolas", 9), padx=6, pady=6)
+        sb_a = ttk.Scrollbar(f_a, orient=tk.VERTICAL, command=txt_a.yview)
+        sb_b = ttk.Scrollbar(f_b, orient=tk.VERTICAL, command=txt_b.yview)
+        txt_a.insert(tk.END, lines_left)
+        txt_b.insert(tk.END, lines_right)
+        txt_a.tag_configure("diff", background="#FFF3E0", foreground="#CC6600")
+        txt_b.tag_configure("diff", background="#FFF3E0", foreground="#CC6600")
+        for i in range(n):
+            vl = str(left_vals[i]).strip() if i < len(left_vals) else ""
+            vr = str(right_vals[i]).strip() if i < len(right_vals) else ""
+            if vl != vr:
+                line_start = "%d.0" % (i + 1)
+                line_end = "%d.0" % (i + 2)
+                try:
+                    txt_a.tag_add("diff", line_start, line_end)
+                    txt_b.tag_add("diff", line_start, line_end)
+                except tk.TclError:
+                    pass
+
+        def _sync_a(first, last):
+            sb_a.set(first, last)
+            sb_b.set(first, last)
+            txt_b.yview_moveto(first)
+
+        def _sync_b(first, last):
+            sb_b.set(first, last)
+            sb_a.set(first, last)
+            txt_a.yview_moveto(first)
+
+        txt_a.config(yscrollcommand=_sync_a)
+        txt_b.config(yscrollcommand=_sync_b)
+        txt_a.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb_a.pack(side=tk.RIGHT, fill=tk.Y)
+        txt_b.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb_b.pack(side=tk.RIGHT, fill=tk.Y)
+        ttk.Button(win, text="关闭", command=win.destroy).pack(pady=(0, pad))
 
     def _on_cancel(self):
         global _merge_instance

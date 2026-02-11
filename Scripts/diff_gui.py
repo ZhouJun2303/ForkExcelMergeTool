@@ -246,6 +246,7 @@ class DiffWindow:
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         sbh.pack(side=tk.BOTTOM, fill=tk.X)
+        self.tree.bind("<Double-1>", self._on_tree_double_click)
         self.tree.tag_configure("新增行", foreground="#008000", background="#E8F5E9")
         self.tree.tag_configure("删除行", foreground="#CC0000", background="#FFEBEE")
         self.tree.tag_configure("新增列", foreground="#008000", background="#E8F5E9")
@@ -299,6 +300,88 @@ class DiffWindow:
             shown += 1
         if self.diff_rows and hasattr(self, "status_var") and self.status_var:
             self.status_var.set("已生成对比文件，共 %d 行差异，当前显示 %d 条" % (len(self.diff_rows), shown))
+
+    def _on_tree_double_click(self, event):
+        """双击列表行：打开详情面板，左右对比显示每个参数完整内容。"""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        item = sel[0]
+        vals = self.tree.item(item, "values")
+        if len(vals) < 5:
+            return
+        sheet_name, key, status = vals[0], vals[1], vals[2]
+        row = next(
+            (r for r in self.diff_rows if r[0] == sheet_name and r[1] == key and r[2] == status),
+            None,
+        )
+        if not row:
+            return
+        _, _, _, str_a, str_b = row
+        self._show_detail_panel(sheet_name, key, status, str_a, str_b)
+
+    def _show_detail_panel(self, sheet_name, key, status, str_a, str_b):
+        """弹出 Toplevel：左右两栏显示 A/B 完整参数，每参数一行。"""
+        win = tk.Toplevel(self.root)
+        win.title("详情 — %s / %s / %s" % (sheet_name, key, status))
+        win.minsize(640, 400)
+        win.geometry("900x500")
+        pad = 8
+        header = ttk.Frame(win, padding=(pad, pad))
+        header.pack(fill=tk.X)
+        label_a = "A(本地)" if self.baseline == "local" else "A(线上)"
+        label_b = "B(线上)" if self.baseline == "local" else "B(本地)"
+        ttk.Label(header, text=label_a, font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+        ttk.Label(header, text="  |  ", font=("Segoe UI", 10)).pack(side=tk.LEFT)
+        ttk.Label(header, text=label_b, font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+        paned = ttk.PanedWindow(win, orient=tk.HORIZONTAL)
+        paned.pack(fill=tk.BOTH, expand=True, padx=pad, pady=(0, pad))
+        params_a = str_a.split(" | ") if str_a else [""]
+        params_b = str_b.split(" | ") if str_b else [""]
+        n = max(len(params_a), len(params_b), 1)
+        lines_a = "\n".join("%d: %s" % (i + 1, (params_a[i] if i < len(params_a) else "")) for i in range(n))
+        lines_b = "\n".join("%d: %s" % (i + 1, (params_b[i] if i < len(params_b) else "")) for i in range(n))
+        f_a = ttk.Frame(paned)
+        f_b = ttk.Frame(paned)
+        paned.add(f_a, weight=1)
+        paned.add(f_b, weight=1)
+        txt_a = tk.Text(f_a, wrap=tk.WORD, font=("Consolas", 9), padx=6, pady=6)
+        txt_b = tk.Text(f_b, wrap=tk.WORD, font=("Consolas", 9), padx=6, pady=6)
+        sb_a = ttk.Scrollbar(f_a, orient=tk.VERTICAL, command=txt_a.yview)
+        sb_b = ttk.Scrollbar(f_b, orient=tk.VERTICAL, command=txt_b.yview)
+        txt_a.insert(tk.END, lines_a)
+        txt_b.insert(tk.END, lines_b)
+        txt_a.tag_configure("diff", background="#FFF3E0", foreground="#CC6600")
+        txt_b.tag_configure("diff", background="#FFF3E0", foreground="#CC6600")
+        for i in range(n):
+            va = str(params_a[i]).strip() if i < len(params_a) else ""
+            vb = str(params_b[i]).strip() if i < len(params_b) else ""
+            if va != vb:
+                line_start = "%d.0" % (i + 1)
+                line_end = "%d.0" % (i + 2)
+                try:
+                    txt_a.tag_add("diff", line_start, line_end)
+                    txt_b.tag_add("diff", line_start, line_end)
+                except tk.TclError:
+                    pass
+
+        def _sync_a(first, last):
+            sb_a.set(first, last)
+            sb_b.set(first, last)
+            txt_b.yview_moveto(first)
+
+        def _sync_b(first, last):
+            sb_b.set(first, last)
+            sb_a.set(first, last)
+            txt_a.yview_moveto(first)
+
+        txt_a.config(yscrollcommand=_sync_a)
+        txt_b.config(yscrollcommand=_sync_b)
+        txt_a.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb_a.pack(side=tk.RIGHT, fill=tk.Y)
+        txt_b.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb_b.pack(side=tk.RIGHT, fill=tk.Y)
+        ttk.Button(win, text="关闭", command=win.destroy).pack(pady=(0, pad))
 
     def _open_excel(self):
         if self.path_out and os.path.isfile(self.path_out):

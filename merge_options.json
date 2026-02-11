@@ -5,9 +5,7 @@
   "D": true,
   "E": true,
   "F": true,
-  "G": false,
-  "auto_open_merged": false,
-  "auto_open_compare": false,
+  "G": true,
   "diff_filter": {
     "新增行": true,
     "删除行": true,
@@ -15,5 +13,6 @@
     "删除列": true,
     "修改": true,
     "相同": false
-  }
+  },
+  "auto_open_compare": false
 }
