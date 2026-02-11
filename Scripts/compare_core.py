@@ -12,7 +12,14 @@ import openpyxl
 from openpyxl.styles import PatternFill
 
 from config import COMPARE_SUFFIX
-from excel_io import cell_str, get_sheet_names, load_sheet_rows, rows_to_dict
+from excel_io import (
+    cell_str,
+    get_sheet_names,
+    header_normalize_for_compare,
+    load_sheet_header,
+    load_sheet_rows,
+    rows_to_dict,
+)
 from log_util import log
 
 
@@ -22,7 +29,8 @@ def get_compare_data(path_a, path_b):
     返回 (path_out, sheet_names, diff_rows)：
       - path_out: 将生成的对比文件路径（与 path_a 同目录，文件名为 {base}_compare.xlsx）
       - sheet_names: 参与对比的 Sheet 名列表
-      - diff_rows: [(sheet_name, key, status, str_a, str_b), ...]，status 为 "A独有"|"B新增"|"修改"|"相同"
+      - diff_rows: [(sheet_name, key, status, str_a, str_b), ...]，
+        status 为 "新增行"|"删除行"|"新增列"|"删除列"|"修改"|"相同"
     """
     out_dir = os.path.dirname(os.path.abspath(path_a))
     base_name = os.path.splitext(os.path.basename(path_a))[0]
@@ -55,6 +63,24 @@ def get_compare_data(path_a, path_b):
     for sheet_name in sheet_names:
         ws_a = wb_a[sheet_name] if sheet_name in wb_a.sheetnames else None
         ws_b = wb_b[sheet_name] if sheet_name in wb_b.sheetnames else None
+
+        # 列差异（表头）：新增列 = B 有 A 无，删除列 = A 有 B 无
+        max_col = max(
+            (ws_a.max_column or 1) if ws_a else 1,
+            (ws_b.max_column or 1) if ws_b else 1,
+        )
+        header_a = load_sheet_header(ws_a, max_col) if ws_a else []
+        header_b = load_sheet_header(ws_b, max_col) if ws_b else []
+        norm_a = set(header_normalize_for_compare(h) for h in header_a if h)
+        norm_b = set(header_normalize_for_compare(h) for h in header_b if h)
+        new_cols = [h for h in header_b if h and header_normalize_for_compare(h) not in norm_a]
+        del_cols = [h for h in header_a if h and header_normalize_for_compare(h) not in norm_b]
+        if new_cols:
+            diff_rows.append((sheet_name, "[新增列]", "新增列", "", " | ".join(new_cols)))
+        if del_cols:
+            diff_rows.append((sheet_name, "[删除列]", "删除列", " | ".join(del_cols), ""))
+
+        # 行差异
         rows_a = load_sheet_rows(ws_a) if ws_a else []
         rows_b = load_sheet_rows(ws_b) if ws_b else []
         dict_a = rows_to_dict(rows_a)
@@ -77,9 +103,9 @@ def get_compare_data(path_a, path_b):
             str_a = " | ".join(vals_a)
             str_b = " | ".join(vals_b)
             if row_a is None:
-                status = "B新增"
+                status = "新增行"
             elif row_b is None:
-                status = "A独有"
+                status = "删除行"
             elif str_a != str_b:
                 status = "修改"
             else:
@@ -115,7 +141,7 @@ def write_compare_excel(path_out, sheet_names, diff_rows, open_file=False):
         ws_out.cell(row=r, column=2, value=str_a)
         ws_out.cell(row=r, column=3, value=str_b)
         ws_out.cell(row=r, column=4, value=status)
-        fill = green_fill if status == "B新增" else (red_fill if status == "A独有" else (yellow_fill if status == "修改" else None))
+        fill = green_fill if status in ("新增行", "新增列") else (red_fill if status in ("删除行", "删除列") else (yellow_fill if status == "修改" else None))
         if fill:
             for col in range(1, 5):
                 ws_out.cell(row=r, column=col).fill = fill

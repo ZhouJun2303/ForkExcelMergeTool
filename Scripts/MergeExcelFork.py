@@ -16,7 +16,8 @@ import os
 import sys
 import traceback
 
-from log_util import log
+from tkinter import messagebox
+from log_util import log, try_acquire_compare_lock, try_acquire_merge_lock
 
 
 def _normalize_args():
@@ -55,7 +56,15 @@ def main():
                     print("ERROR: " + msg, file=sys.stderr)
                     sys.exit(1)
             try:
-                from merge_gui import MergeWindow
+                from merge_gui import MergeWindow, get_existing_merge_window
+                existing = get_existing_merge_window()
+                if existing is not None:
+                    existing.activate_and_refresh(path_local, path_base, path_remote, path_merged)
+                    messagebox.showinfo("提示", "合并窗口已存在，已激活并刷新。")
+                    sys.exit(0)
+                if not try_acquire_merge_lock():
+                    messagebox.showwarning("提示", "合并窗口已在其他进程中打开，请先关闭后再试。")
+                    sys.exit(0)
                 win = MergeWindow(path_local, path_base, path_remote, path_merged)
                 win.run()
                 sys.exit(0)
@@ -78,7 +87,15 @@ def main():
                 print("ERROR: " + msg, file=sys.stderr)
                 sys.exit(1)
             try:
-                from diff_gui import DiffWindow
+                from diff_gui import DiffWindow, get_existing_diff_window
+                existing = get_existing_diff_window()
+                if existing is not None:
+                    existing.activate_and_refresh(path_a, path_b)
+                    messagebox.showinfo("提示", "对比窗口已存在，已激活并刷新。")
+                    sys.exit(0)
+                if not try_acquire_compare_lock():
+                    messagebox.showwarning("提示", "对比窗口已在其他进程中打开，请先关闭后再试。")
+                    sys.exit(0)
                 win = DiffWindow(path_a, path_b)
                 win.run()
                 sys.exit(0)

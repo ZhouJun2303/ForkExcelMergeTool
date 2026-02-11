@@ -28,6 +28,82 @@ def merge_options_path():
     return os.path.join(log_dir(), MERGE_OPTIONS_FILE)
 
 
+def _lock_path(name):
+    return os.path.join(log_dir(), ".merge_excel_%s.lock" % name)
+
+
+def _is_pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def try_acquire_compare_lock():
+    """尝试占用对比窗口锁。返回 True 表示成功，False 表示已有其他进程占用。"""
+    path = _lock_path("compare")
+    try:
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                pid = int(f.read().strip())
+            if _is_pid_alive(pid):
+                return False
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+        return True
+    except Exception:
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except Exception:
+            pass
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+        return True
+
+
+def release_compare_lock():
+    try:
+        path = _lock_path("compare")
+        if os.path.isfile(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+def try_acquire_merge_lock():
+    """尝试占用合并窗口锁。返回 True 表示成功，False 表示已有其他进程占用。"""
+    path = _lock_path("merge")
+    try:
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                pid = int(f.read().strip())
+            if _is_pid_alive(pid):
+                return False
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+        return True
+    except Exception:
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except Exception:
+            pass
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+        return True
+
+
+def release_merge_lock():
+    try:
+        path = _lock_path("merge")
+        if os.path.isfile(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
 def log(msg, is_error=False):
     """追加一行到 MergeExcelFork.log。"""
     try:

@@ -33,7 +33,7 @@ from gui_common import (
     setup_merge_styles,
 )
 from git_util import get_git_merge_info, stage_merged_and_cleanup
-from log_util import merge_options_path
+from log_util import merge_options_path, release_merge_lock
 from merge_core import do_merge
 
 
@@ -95,6 +95,19 @@ def _save_auto_open_merged(value):
         pass
 
 
+# 单实例：当前合并窗口引用，关闭时清空
+_merge_instance = None
+
+
+def get_existing_merge_window():
+    """返回当前已存在的合并窗口（若存在且未关闭），否则返回 None。"""
+    global _merge_instance
+    if _merge_instance is not None and _merge_instance.root.winfo_exists():
+        return _merge_instance
+    _merge_instance = None
+    return None
+
+
 class MergeWindow:
     """
     合并 GUI：7 项多选（A～G）、基准选择、根据选项展示将删除/新增/冲突列表，生成合并结果。
@@ -112,6 +125,7 @@ class MergeWindow:
     BASE_SIDES = [("local", "本地 (Local)"), ("remote", "线上 (Remote)")]
 
     def __init__(self, path_local, path_base, path_remote, path_merged):
+        global _merge_instance
         self.path_local = path_local
         self.path_base = path_base
         self.path_remote = path_remote
@@ -128,6 +142,7 @@ class MergeWindow:
         self.conflict_cols = []
         self.root = tk.Tk()
         self.root.title("Excel 多模式合并 v%s" % APP_VERSION)
+        _merge_instance = self
         self.root.minsize(820, 760)
         self.root.geometry("1024x820")
         setup_merge_styles(self.root)
@@ -138,7 +153,7 @@ class MergeWindow:
 
     def _build_ui(self):
         pad = 12
-        self.status_var = tk.StringVar(value="")
+        self.status_var = tk.StringVar(self.root, value="")
         bottom_bar = ttk.Frame(self.root, padding=(pad, 10))
         bottom_bar.pack(side=tk.BOTTOM, fill=tk.X)
         bottom_bar.pack_propagate(True)
@@ -149,7 +164,7 @@ class MergeWindow:
         btn_row.pack(fill=tk.X, pady=(8, 0))
         self.btn_merge = ttk.Button(btn_row, text="生成合并结果", command=self._on_generate_merge, style="Accent.TButton")
         self.btn_merge.pack(side=tk.LEFT, padx=(0, 8))
-        self.auto_open_var = tk.BooleanVar(value=_load_auto_open_merged())
+        self.auto_open_var = tk.BooleanVar(self.root, value=_load_auto_open_merged())
         ttk.Checkbutton(
             btn_row, text="合并后自动打开", variable=self.auto_open_var,
             command=lambda: _save_auto_open_merged(self.auto_open_var.get()),
@@ -180,12 +195,12 @@ class MergeWindow:
         loaded = _load_merge_options()
         self.option_vars = {}
         for key, label in self.OPTIONS:
-            var = tk.BooleanVar(value=loaded.get(key, DEFAULT_OPTIONS.get(key, False)))
+            var = tk.BooleanVar(self.root, value=loaded.get(key, DEFAULT_OPTIONS.get(key, False)))
             self.option_vars[key] = var
             cb = ttk.Checkbutton(opts_row, text="%s %s" % (key, label), variable=var, command=self._on_option_click)
             cb.pack(side=tk.LEFT, padx=(0, 12))
         ttk.Label(opts_row, text="  基准：").pack(side=tk.LEFT, padx=(12, 4))
-        self.base_side_var = tk.StringVar(value="local")
+        self.base_side_var = tk.StringVar(self.root, value="local")
         base_cb = ttk.Combobox(opts_row, textvariable=self.base_side_var, state="readonly", width=16)
         base_cb["values"] = [b[1] for b in self.BASE_SIDES]
         base_cb.current(0)
@@ -468,7 +483,18 @@ class MergeWindow:
             gui_log("合并失败: " + str(e), self.status_var, is_error=True)
             messagebox.showerror("错误", str(e) + "\n" + traceback.format_exc())
 
+    def activate_and_refresh(self, path_local, path_base, path_remote, path_merged):
+        """单实例复用：用新路径刷新列表并置前。"""
+        self.path_local = path_local
+        self.path_base = path_base
+        self.path_remote = path_remote
+        self.path_merged = path_merged
+        self._on_options_or_base_changed()
+        self.root.lift()
+        self.root.focus_force()
+
     def _on_confirm_done(self):
+        global _merge_instance
         if not self.merge_done:
             messagebox.showwarning("提示", "请先点击「生成合并结果」")
             return
@@ -478,6 +504,9 @@ class MergeWindow:
             self.path_merged, self.path_local, self.path_base, self.path_remote, log_callback=_log_cb,
         )
         messagebox.showinfo("完成", "冲突已解决：已 git add，已清理临时文件。Fork 将使用合并后的文件。")
+        release_merge_lock()
+        if _merge_instance is self:
+            _merge_instance = None
         self.root.quit()
         self.root.destroy()
         sys.exit(0)
@@ -504,6 +533,10 @@ class MergeWindow:
         self.tree.item(item, values=vals)
 
     def _on_cancel(self):
+        global _merge_instance
+        release_merge_lock()
+        if _merge_instance is self:
+            _merge_instance = None
         self.root.quit()
         self.root.destroy()
         sys.exit(1)
