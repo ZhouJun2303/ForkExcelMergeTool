@@ -3,6 +3,21 @@ setlocal enabledelayedexpansion
 chcp 65001 >nul
 cd /d "%~dp0"
 
+REM 参数：--gui 无控制台窗口，--test 打包后跑测试，--dist 仅打包不跑测试（未传则默认跑测试）
+set "WINMODE=--console"
+set "RUN_TEST=1"
+:parse
+if "%~1"=="" goto done_parse
+if /i "%~1"=="--gui" set "WINMODE=--windowed"
+if /i "%~1"=="--test" set "RUN_TEST=1"
+if /i "%~1"=="--dist" set "RUN_TEST=0"
+if /i "%~1"=="no-test" set "RUN_TEST=0"
+if /i "%~1"=="0" set "RUN_TEST=0"
+if /i "%~1"=="skip" set "RUN_TEST=0"
+shift
+goto parse
+:done_parse
+
 echo ========== Fork Excel Merge Tool 一键打包 ==========
 echo.
 
@@ -16,8 +31,9 @@ if %ERRORLEVEL% neq 0 (
 echo 依赖 OK
 echo.
 
-echo [2/4] 使用 PyInstaller 打包...
-pyinstaller --onefile --console --name ExcelMergeFork --clean Scripts\MergeExcelFork.py
+echo [2/4] 小版本号递增并打包 ( %WINMODE% )...
+python Scripts\bump_version.py
+pyinstaller --onefile %WINMODE% --name ExcelMergeFork --clean Scripts\MergeExcelFork.py
 if %ERRORLEVEL% neq 0 (
     echo ERROR: PyInstaller 打包失败
     pause
@@ -35,31 +51,24 @@ copy /Y dist\ExcelMergeFork.exe ExcelMergeFork.exe >nul
 echo 已生成 ExcelMergeFork.exe
 echo.
 
-REM 传参 no-test / 0 / skip 时跳过快速验证；无参或其它参数则执行验证
-set "RUN_TEST=1"
-if /i "%1"=="no-test" set "RUN_TEST=0"
-if /i "%1"=="0" set "RUN_TEST=0"
-if /i "%1"=="skip" set "RUN_TEST=0"
-
 if "%RUN_TEST%"=="1" (
-    echo [4/4] 快速验证测试...
-    if not exist TestData\base.xlsx (
-        python TestData\gen_test_data.py
+    echo [4/4] 快速验证（模式合并测试）...
+    if not exist TestData\mode_a_local.xlsx (
+        python TestData\gen_merge_mode_tests.py
     )
-    ExcelMergeFork.exe TestData\local.xlsx TestData\base.xlsx TestData\remote.xlsx TestData\_output\merged.xlsx
+    python TestData\run_merge_mode_tests.py
     if !ERRORLEVEL! equ 0 (
-        echo 合并测试通过
-        ExcelMergeFork.exe TestData\local.xlsx TestData\remote.xlsx
-        if !ERRORLEVEL! equ 0 echo 对比测试通过
+        echo 模式合并测试通过
     ) else (
-        echo WARNING: exe 测试失败，请检查
+        echo WARNING: 模式合并测试失败，请检查
     )
 ) else (
-    echo [4/4] 已跳过快速验证（传参 no-test/0/skip）
+    echo [4/4] 已跳过测试（传参 --dist / no-test / 0 / skip 时跳过）
 )
 
 echo.
 echo ========== 打包完成 ==========
 echo 产物: %CD%\ExcelMergeFork.exe
+echo 参数说明: --gui 无控制台窗口  --test 打包后跑测试  --dist 仅打包不跑测试
 echo.
 pause

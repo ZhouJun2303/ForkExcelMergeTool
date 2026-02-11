@@ -16,3 +16,6 @@ COMPARE_SUFFIX = "_compare"
 
 # Sheet 名过滤：以该前缀开头的表不参与合并/对比（如 "#说明"）
 SKIP_SHEET_PREFIX = "#"
+
+# 合并选项多选框持久化文件名（与 exe/脚本同目录）
+MERGE_OPTIONS_FILE = "merge_options.json"

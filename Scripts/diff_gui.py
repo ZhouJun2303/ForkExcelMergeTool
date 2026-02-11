@@ -10,6 +10,7 @@ from tkinter import ttk, messagebox
 
 from compare_core import get_compare_data, write_compare_excel
 from gui_common import gui_log, make_color_legend, open_excel_file, setup_merge_styles
+from version import __version__ as APP_VERSION
 
 
 class DiffWindow:
@@ -22,7 +23,7 @@ class DiffWindow:
         self.diff_rows = []
         self.is_temp = False
         self.root = tk.Tk()
-        self.root.title("Excel 二向对比")
+        self.root.title("Excel 二向对比 v%s" % APP_VERSION)
         self.root.minsize(700, 500)
         self.root.geometry("1000x620")
         setup_merge_styles(self.root)
@@ -33,7 +34,10 @@ class DiffWindow:
         pad = 12
         top = ttk.Frame(self.root, padding=(pad, pad, pad, 6))
         top.pack(fill=tk.X)
-        ttk.Label(top, text="本地 (A) vs 线上 (B)", font=("Segoe UI", 11, "bold")).pack(anchor=tk.W)
+        title_row = ttk.Frame(top)
+        title_row.pack(fill=tk.X)
+        ttk.Label(title_row, text="本地 (A) vs 线上 (B)", font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT)
+        tk.Label(title_row, text="  版本 v%s" % APP_VERSION, font=("Segoe UI", 9, "bold"), fg="#1877f2", bg="#f0f2f5").pack(side=tk.LEFT)
         ttk.Label(top, text="A: %s" % (self.path_a[:70] + "…" if len(self.path_a) > 70 else self.path_a), font=("Segoe UI", 8)).pack(anchor=tk.W)
         ttk.Label(top, text="B: %s" % (self.path_b[:70] + "…" if len(self.path_b) > 70 else self.path_b), font=("Segoe UI", 8)).pack(anchor=tk.W)
         legend_frame = tk.Frame(self.root, bg="#f0f2f5")
@@ -65,7 +69,10 @@ class DiffWindow:
         self.status_var = tk.StringVar(value="")
         status_bar = ttk.Frame(self.root)
         status_bar.pack(fill=tk.X, padx=pad, pady=(0, 4))
-        ttk.Label(status_bar, textvariable=self.status_var, font=("Segoe UI", 9)).pack(anchor=tk.W)
+        ttk.Label(status_bar, textvariable=self.status_var, font=("Segoe UI", 9)).pack(side=tk.LEFT, anchor=tk.W)
+        _ver_frame = tk.Frame(status_bar, bg="#f0f2f5")
+        _ver_frame.pack(side=tk.RIGHT)
+        tk.Label(_ver_frame, text="版本 v%s" % APP_VERSION, font=("Segoe UI", 9, "bold"), fg="#1877f2", bg="#f0f2f5").pack()
         try:
             out_dir = os.path.dirname(os.path.abspath(self.path_a))
             base_name = os.path.splitext(os.path.basename(self.path_a))[0]

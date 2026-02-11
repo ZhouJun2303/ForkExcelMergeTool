@@ -8,7 +8,7 @@ import os
 import sys
 from datetime import datetime
 
-from config import LOG_FILE
+from config import LOG_FILE, MERGE_OPTIONS_FILE
 
 
 def log_dir():
@@ -21,6 +21,11 @@ def log_dir():
 def log_path():
     """日志文件的完整路径。"""
     return os.path.join(log_dir(), LOG_FILE)
+
+
+def merge_options_path():
+    """合并选项持久化文件的完整路径（与 exe/脚本同目录）。"""
+    return os.path.join(log_dir(), MERGE_OPTIONS_FILE)
 
 
 def log(msg, is_error=False):

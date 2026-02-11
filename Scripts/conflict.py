@@ -9,8 +9,11 @@ import openpyxl
 
 from excel_io import (
     cell_str,
+    col_equal,
+    get_column_values,
     get_sheet_names,
     key_str_normalized,
+    load_sheet_header,
     load_sheet_rows_full,
     row_equal,
 )
@@ -171,3 +174,85 @@ def compute_conflicts(path_local, path_base, path_remote):
     wb_b.close()
     wb_r.close()
     return conflicts, sheet_data, sheet_names
+
+
+def compute_conflicts_d(path_local, path_remote, path_base=None):
+    """
+    D 模式：二向冲突检测（冲突行 + 冲突列）。
+    两边都有且内容不同即为冲突。path_base 可选，暂不用于过滤。
+    返回 (conflict_rows, conflict_cols, sheet_names)。
+    - conflict_rows: list of {"sheet", "key", "local_row", "remote_row", "kind": "row"}
+    - conflict_cols: list of {"sheet", "key", "local_col", "remote_col", "kind": "column"}，key 为表头（列名）
+    """
+    wb_l = openpyxl.load_workbook(path_local, data_only=False)
+    wb_r = openpyxl.load_workbook(path_remote, data_only=False)
+
+    seen = set()
+    sheet_names = []
+    for n in get_sheet_names(wb_l):
+        if n not in seen:
+            seen.add(n)
+            sheet_names.append(n)
+    for n in get_sheet_names(wb_r):
+        if n not in seen:
+            seen.add(n)
+            sheet_names.append(n)
+
+    conflict_rows = []
+    conflict_cols = []
+
+    for sheet_name in sheet_names:
+        ws_l = wb_l[sheet_name] if sheet_name in wb_l.sheetnames else None
+        ws_r = wb_r[sheet_name] if sheet_name in wb_r.sheetnames else None
+        if not ws_l or not ws_r:
+            continue
+        max_col = max(ws_l.max_column or 1, ws_r.max_column or 1)
+        max_row = max(ws_l.max_row or 1, ws_r.max_row or 1)
+
+        rows_l, idx_l = load_sheet_rows_full(ws_l, max_col)
+        rows_r, idx_r = load_sheet_rows_full(ws_r, max_col)
+        dict_l, _, ord_l = _dict_and_order(rows_l, idx_l)
+        dict_r, _, ord_r = _dict_and_order(rows_r, idx_r)
+        common_keys = set(dict_l) & set(dict_r)
+        for key in common_keys:
+            if not row_equal(dict_l[key], dict_r[key]):
+                conflict_rows.append({
+                    "sheet": sheet_name,
+                    "key": key,
+                    "local_row": dict_l[key],
+                    "remote_row": dict_r[key],
+                    "kind": "row",
+                })
+
+        header_l = load_sheet_header(ws_l, max_col)
+        header_r = load_sheet_header(ws_r, max_col)
+        norm_to_col_l = {}
+        norm_to_col_r = {}
+        for i, h in enumerate(header_l):
+            if i >= max_col:
+                break
+            n = key_str_normalized(h or "")
+            if n:
+                norm_to_col_l[n] = i + 1
+        for i, h in enumerate(header_r):
+            if i >= max_col:
+                break
+            n = key_str_normalized(h or "")
+            if n:
+                norm_to_col_r[n] = i + 1
+        common_headers = set(norm_to_col_l) & set(norm_to_col_r)
+        for h_norm in common_headers:
+            col_l = get_column_values(ws_l, norm_to_col_l[h_norm], max_row)
+            col_r = get_column_values(ws_r, norm_to_col_r[h_norm], max_row)
+            if not col_equal(col_l, col_r):
+                conflict_cols.append({
+                    "sheet": sheet_name,
+                    "key": header_l[norm_to_col_l[h_norm] - 1] or header_r[norm_to_col_r[h_norm] - 1],
+                    "local_col": col_l,
+                    "remote_col": col_r,
+                    "kind": "column",
+                })
+
+    wb_l.close()
+    wb_r.close()
+    return conflict_rows, conflict_cols, sheet_names

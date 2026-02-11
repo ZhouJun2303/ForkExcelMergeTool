@@ -1,20 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-合并窗口：三向合并的 GUI。只做一件事——展示冲突列表、本地/线上版本信息、生成合并结果并确认。
-合并策略：以本地为底，复制本地到 MERGED，再在副本上只修改“取线上”的冲突行并追加仅线上有的行。
+合并窗口：A 行不变 / B 列不变 / C 删除行 / D 删除列 / E 新增 Sheet / F 删除 Sheet / G 冲突行或列。
+多选框选中项参与合并逻辑，选项持久化到本地 merge_options.json。
 """
 
+import json
 import os
-import shutil
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 
 import openpyxl
-from openpyxl.styles import PatternFill
 
 from config import BACKUP_SUBDIR
-from conflict import compute_conflicts
+from conflict import compute_conflicts_d
+from excel_io import (
+    get_sheet_names,
+    key_str_normalized,
+    load_sheet_header,
+    load_sheet_rows,
+    ordered_keys,
+    rows_to_dict,
+)
+from version import __version__ as APP_VERSION
 from gui_common import (
     gui_log,
     make_color_legend,
@@ -22,71 +30,133 @@ from gui_common import (
     setup_merge_styles,
 )
 from git_util import get_git_merge_info, stage_merged_and_cleanup
+from log_util import merge_options_path
+from merge_core import do_merge
+
+
+# 选项默认值（勾选=参与逻辑）
+DEFAULT_OPTIONS = {"A": True, "B": True, "C": False, "D": False, "E": True, "F": False, "G": True}
+
+
+def _load_merge_options():
+    """从本地文件加载合并选项，不存在或异常则返回默认。"""
+    try:
+        path = merge_options_path()
+        if path and os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {k: bool(data.get(k, DEFAULT_OPTIONS.get(k, False))) for k in "ABCDEFG"}
+    except Exception:
+        pass
+    return dict(DEFAULT_OPTIONS)
+
+
+def _save_merge_options(opts):
+    """将合并选项写入本地文件。"""
+    try:
+        path = merge_options_path()
+        if path:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(opts, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 
 class MergeWindow:
     """
-    合并 GUI：冲突选择、打开本地/线上/合并结果、Git 信息、生成合并结果、确认并解决冲突。
+    合并 GUI：7 项多选（A～G）、基准选择、根据选项展示将删除/新增/冲突列表，生成合并结果。
     """
+
+    OPTIONS = [
+        ("A", "行不变"),
+        ("B", "列不变"),
+        ("C", "删除行"),
+        ("D", "删除列"),
+        ("E", "新增 Sheet"),
+        ("F", "删除 Sheet"),
+        ("G", "冲突行/列"),
+    ]
+    BASE_SIDES = [("local", "本地 (Local)"), ("remote", "线上 (Remote)")]
 
     def __init__(self, path_local, path_base, path_remote, path_merged):
         self.path_local = path_local
         self.path_base = path_base
         self.path_remote = path_remote
         self.path_merged = path_merged
-        # 合并完成后实际写入的规范路径，用于“打开合并结果”时保证打开的是刚保存的文件（避免 path_merged 与 path_local 同路径时误开缓存）
         self._merged_file_path = None
-        self.conflict_vars = []
+        self._backup_merged_path = None
         self.merge_done = False
+        self.base_side_var = None
+        self.status_var = None
+        self.tree = None
+        self.option_vars = {}
+        self.conflict_vars = []
+        self.conflict_rows = []
+        self.conflict_cols = []
         self.root = tk.Tk()
-        self.root.title("Excel 三向合并")
-        self.root.minsize(800, 680)
-        self.root.geometry("1000x720")
+        self.root.title("Excel 多模式合并 v%s" % APP_VERSION)
+        self.root.minsize(820, 760)
+        self.root.geometry("1024x820")
         setup_merge_styles(self.root)
-
-        try:
-            gui_log("开始计算冲突...", None)
-            self.conflicts, self.sheet_data, self.sheet_names = compute_conflicts(
-                path_local, path_base, path_remote
-            )
-        except Exception as e:
-            import traceback
-            msg = str(e) + "\n" + traceback.format_exc()
-            gui_log(msg, None, is_error=True)
-            messagebox.showerror("错误", "加载失败: " + str(e))
-            self.root.destroy()
-            sys.exit(2)
 
         self.local_info, self.remote_info = get_git_merge_info(path_merged)
         self._build_ui()
+        self._on_options_or_base_changed()
 
     def _build_ui(self):
         pad = 12
         self.status_var = tk.StringVar(value="")
-        bottom_bar = ttk.Frame(self.root, padding=(pad, 8))
+        bottom_bar = ttk.Frame(self.root, padding=(pad, 10))
         bottom_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        bottom_bar.pack_propagate(True)
         status_row = ttk.Frame(bottom_bar)
         status_row.pack(fill=tk.X)
-        ttk.Label(status_row, textvariable=self.status_var, font=("Segoe UI", 9)).pack(anchor=tk.W)
+        ttk.Label(status_row, textvariable=self.status_var, font=("Segoe UI", 9)).pack(side=tk.LEFT, anchor=tk.W)
+        _ver_frame = tk.Frame(status_row, bg="#f0f2f5")
+        _ver_frame.pack(side=tk.RIGHT)
+        tk.Label(_ver_frame, text="版本 v%s" % APP_VERSION, font=("Segoe UI", 9, "bold"), fg="#1877f2", bg="#f0f2f5").pack()
         btn_row = ttk.Frame(bottom_bar)
-        btn_row.pack(fill=tk.X, pady=(6, 0))
+        btn_row.pack(fill=tk.X, pady=(8, 0))
         self.btn_merge = ttk.Button(btn_row, text="生成合并结果", command=self._on_generate_merge, style="Accent.TButton")
         self.btn_merge.pack(side=tk.LEFT, padx=(0, 8))
         self.btn_open_merged = ttk.Button(btn_row, text="打开合并结果", command=self._on_open_merged)
         self.btn_open_merged.pack(side=tk.LEFT, padx=8)
+        self.btn_open_backup_merged = ttk.Button(btn_row, text="打开备份的合并文件", command=self._on_open_backup_merged)
+        self.btn_open_backup_merged.pack(side=tk.LEFT, padx=8)
         self.btn_confirm = ttk.Button(btn_row, text="确认无误并解决冲突", command=self._on_confirm_done)
         self.btn_confirm.pack(side=tk.LEFT, padx=8)
         self.btn_confirm.config(state=tk.DISABLED)
         ttk.Button(btn_row, text="取消", command=self._on_cancel).pack(side=tk.LEFT)
-        gui_log("已加载 %d 项差异（含仅本地有/仅线上有），请选择后点击「生成合并结果」" % len(self.conflicts), self.status_var)
 
         center = ttk.Frame(self.root)
         center.pack(fill=tk.BOTH, expand=True, padx=pad, pady=(0, pad))
         top = ttk.Frame(center, padding=(0, 0, 0, 6))
         top.pack(fill=tk.X)
-        ttk.Label(top, text="本地 (左) + 线上 (右) → 合并结果", font=("Segoe UI", 11, "bold")).pack(anchor=tk.W)
+        title_row = ttk.Frame(top)
+        title_row.pack(fill=tk.X)
+        ttk.Label(title_row, text="多选项合并：勾选参与逻辑，选项已保存到本地", font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT)
+        tk.Label(title_row, text="  版本 v%s" % APP_VERSION, font=("Segoe UI", 9, "bold"), fg="#1877f2", bg="#f0f2f5").pack(side=tk.LEFT)
         path_short = self.path_merged if len(self.path_merged) <= 72 else "…" + self.path_merged[-68:]
         ttk.Label(top, text=path_short, font=("Segoe UI", 8)).pack(anchor=tk.W)
+
+        opts_row = ttk.Frame(top)
+        opts_row.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(opts_row, text="参与项：").pack(side=tk.LEFT, padx=(0, 8))
+        loaded = _load_merge_options()
+        self.option_vars = {}
+        for key, label in self.OPTIONS:
+            var = tk.BooleanVar(value=loaded.get(key, DEFAULT_OPTIONS.get(key, False)))
+            self.option_vars[key] = var
+            cb = ttk.Checkbutton(opts_row, text="%s %s" % (key, label), variable=var, command=self._on_option_click)
+            cb.pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Label(opts_row, text="  基准：").pack(side=tk.LEFT, padx=(12, 4))
+        self.base_side_var = tk.StringVar(value="local")
+        base_cb = ttk.Combobox(opts_row, textvariable=self.base_side_var, state="readonly", width=16)
+        base_cb["values"] = [b[1] for b in self.BASE_SIDES]
+        base_cb.current(0)
+        base_cb.pack(side=tk.LEFT)
+        base_cb.bind("<<ComboboxSelected>>", lambda e: self._on_options_or_base_changed())
+
         info_frame = ttk.LabelFrame(center, text="版本说明", padding=pad)
         info_frame.pack(fill=tk.X, pady=(0, 6))
         row1 = ttk.Frame(info_frame)
@@ -99,53 +169,130 @@ class MergeWindow:
         right_box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
         self._fill_commit_info(right_box, self.remote_info)
         ttk.Button(right_box, text="打开线上 Excel", command=lambda: self._open_remote()).pack(anchor=tk.W, pady=(6, 0))
+
         legend_merge = make_color_legend(center, [
-            ("#CCFFCC", "绿色=新增"),
-            ("#FFFF99", "黄色=修改"),
-            ("#FFCCCC", "红色=冲突（需选择）"),
-            (None, "无=无变化"),
+            ("#008000", "绿色=新增"),
+            ("#CC6600", "橙色=修改"),
+            ("#CC0000", "红色=冲突"),
         ])
         legend_merge.pack(anchor=tk.W, pady=(0, 6))
-        n_need_choice = sum(1 for c in self.conflicts if not c.get("_only_local") and not c.get("_only_remote"))
-        hint = "下表共 %d 项差异（其中 %d 项需选择取本地/取线上，其余为仅一方有将自动保留）" % (len(self.conflicts), n_need_choice)
-        ttk.Label(center, text=hint, font=("Segoe UI", 9)).pack(anchor=tk.W, pady=(0, 2))
-        ttk.Label(center, text="说明：首列相同 key 出现多行时只按一行参与合并；若需保留多行请用唯一 key。", font=("Segoe UI", 8)).pack(anchor=tk.W)
-        if len(self.conflicts) == 0:
-            ttk.Label(center, text="若应有冲突却显示 0：请确认三个文件首列为行关键列、且本地与线上内容确有不同；详见同目录下 MergeExcelFork.log。", font=("Segoe UI", 8)).pack(anchor=tk.W)
-        ttk.Label(center, text="", font=("Segoe UI", 1)).pack(anchor=tk.W, pady=(0, 2))
-        paned = ttk.PanedWindow(center, orient=tk.VERTICAL)
-        paned.pack(fill=tk.BOTH, expand=True)
-        table_frame = ttk.Frame(paned)
-        paned.add(table_frame, weight=2)
-        cols = ("Sheet", "Key", "选择")
-        self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=10)
+
+        self.content_frame = ttk.Frame(center)
+        self.content_frame.pack(fill=tk.BOTH, expand=True)
+        self.hint_label = ttk.Label(self.content_frame, text="", font=("Segoe UI", 9))
+        self.hint_label.pack(anchor=tk.W)
+        table_frame = ttk.Frame(self.content_frame)
+        table_frame.pack(fill=tk.BOTH, expand=True)
+        cols = ("Sheet", "Key / 说明", "选择")
+        self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=14)
         for c in cols:
             self.tree.heading(c, text=c)
-            self.tree.column(c, width=100 if c != "Key" else 220)
+            self.tree.column(c, width=120 if c != "Key / 说明" else 280)
         sb = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
-        for i, c in enumerate(self.conflicts):
-            if c.get("_only_local"):
-                choice_label = "将保留本地"
-                var = tk.StringVar(value="本地")
-            elif c.get("_only_remote"):
-                choice_label = "将保留线上"
-                var = tk.StringVar(value="线上")
-            else:
-                choice_label = "本地"
-                var = tk.StringVar(value="本地")
-            self.conflict_vars.append(var)
-            self.tree.insert("", tk.END, values=(c["sheet"], c["key"], choice_label), tags=(str(i),))
-        self.tree.tag_configure("conflict", background="#fff3cd")
-        sel_frame = ttk.Frame(paned)
-        paned.add(sel_frame, weight=0)
+        sel_frame = ttk.Frame(self.content_frame)
+        sel_frame.pack(fill=tk.X, pady=(4, 0))
         ttk.Label(sel_frame, text="当前选中项：").pack(side=tk.LEFT)
-        btn_frame = ttk.Frame(sel_frame)
-        btn_frame.pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(btn_frame, text="取本地", command=lambda: self._set_choice("本地")).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="取线上", command=lambda: self._set_choice("线上")).pack(side=tk.LEFT, padx=2)
+        ttk.Button(sel_frame, text="取本地", command=lambda: self._set_choice("本地")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(sel_frame, text="取线上", command=lambda: self._set_choice("线上")).pack(side=tk.LEFT)
+
+    def _get_options(self):
+        """返回当前勾选的选项集合 {"A","B",...}。"""
+        return {k for k, v in self.option_vars.items() if v.get()}
+
+    def _get_base_side(self):
+        raw = self.base_side_var.get()
+        for sid, label in self.BASE_SIDES:
+            if label == raw:
+                return sid
+        return "local"
+
+    def _on_option_click(self):
+        opts = {k: self.option_vars[k].get() for k in self.option_vars}
+        _save_merge_options(opts)
+        self._on_options_or_base_changed()
+
+    def _on_options_or_base_changed(self):
+        for i in self.tree.get_children(""):
+            self.tree.delete(i)
+        self.conflict_vars.clear()
+        options = self._get_options()
+        base_side = self._get_base_side()
+        try:
+            self._fill_content_by_options(options, base_side)
+        except Exception as e:
+            gui_log("加载数据失败: " + str(e), self.status_var, is_error=True)
+            self.hint_label.config(text="加载失败: " + str(e) + " 详见日志。")
+
+    def _fill_content_by_options(self, options, base_side):
+        """根据勾选项 C/D/E/F/G 填充表格：删除行/列、新增Sheet、删除Sheet、冲突列表。"""
+        wb_base = openpyxl.load_workbook(
+            self.path_local if base_side == "local" else self.path_remote,
+            data_only=True,
+        )
+        wb_other = openpyxl.load_workbook(
+            self.path_remote if base_side == "local" else self.path_local,
+            data_only=True,
+        )
+        base_sheets = set(get_sheet_names(wb_base))
+        other_sheets = get_sheet_names(wb_other)
+        total = 0
+        if "C" in options:
+            for sheet_name in get_sheet_names(wb_base):
+                if sheet_name not in wb_base.sheetnames or sheet_name not in wb_other.sheetnames:
+                    continue
+                ws_b = wb_base[sheet_name]
+                ws_o = wb_other[sheet_name]
+                max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
+                base_keys = set(rows_to_dict(load_sheet_rows(ws_b, max_col)))
+                other_keys = set(rows_to_dict(load_sheet_rows(ws_o, max_col)))
+                for k in base_keys:
+                    if k not in other_keys:
+                        self.tree.insert("", tk.END, values=(sheet_name, k, "（将删除行）"))
+                        total += 1
+        if "D" in options:
+            for sheet_name in get_sheet_names(wb_base):
+                if sheet_name not in wb_base.sheetnames or sheet_name not in wb_other.sheetnames:
+                    continue
+                ws_b = wb_base[sheet_name]
+                ws_o = wb_other[sheet_name]
+                max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
+                header_b = set(load_sheet_header(ws_b, max_col))
+                header_o = set(load_sheet_header(ws_o, max_col))
+                for h in header_b:
+                    if h and h not in header_o:
+                        self.tree.insert("", tk.END, values=(sheet_name, h, "（将删除列）"))
+                        total += 1
+        if "E" in options:
+            for name in other_sheets:
+                if name not in base_sheets and name in wb_other.sheetnames:
+                    self.tree.insert("", tk.END, values=(name, "（将新增 Sheet）", "—"))
+                    total += 1
+        if "F" in options:
+            for name in base_sheets:
+                if name not in set(get_sheet_names(wb_other)):
+                    self.tree.insert("", tk.END, values=(name, "（将删除 Sheet）", "—"))
+                    total += 1
+        if "G" in options:
+            self.conflict_rows, self.conflict_cols, _ = compute_conflicts_d(self.path_local, self.path_remote)
+            for c in self.conflict_rows:
+                var = tk.StringVar(value="本地")
+                idx = len(self.conflict_vars)
+                self.conflict_vars.append((var, c, "row"))
+                self.tree.insert("", tk.END, values=(c["sheet"], c["key"] + " (行)", "将保留本地"), tags=(str(idx),))
+                total += 1
+            for c in self.conflict_cols:
+                var = tk.StringVar(value="本地")
+                idx = len(self.conflict_vars)
+                self.conflict_vars.append((var, c, "column"))
+                self.tree.insert("", tk.END, values=(c["sheet"], c["key"] + " (列)", "将保留本地"), tags=(str(idx),))
+                total += 1
+        wb_base.close()
+        wb_other.close()
+        self.hint_label.config(text="勾选参与项：%s。下列为将删除/新增/冲突项，共 %d 条。" % (", ".join(sorted(options)) or "无", total))
+        gui_log("已加载选项数据，共 %d 条" % total, self.status_var)
 
     def _fill_commit_info(self, parent, info):
         parts = []
@@ -154,8 +301,6 @@ class MergeWindow:
                 parts.append("Hash: %s" % info["short_hash"])
             if info.get("author"):
                 parts.append("提交人: %s" % info["author"])
-            if info.get("email"):
-                parts.append("(%s)" % info["email"])
             if info.get("date"):
                 parts.append(info["date"][:19] if len(info["date"]) >= 19 else info["date"])
             if info.get("message"):
@@ -180,12 +325,10 @@ class MergeWindow:
             messagebox.showwarning("提示", "文件不存在或无法打开")
 
     def _on_open_merged(self):
-        """打开的是合并结果文件（刚保存的 path_merged），使用保存时记录的规范路径，避免开错或打开缓存。"""
         if not self.merge_done:
             messagebox.showwarning("提示", "请先点击「生成合并结果」")
             return
-        # 优先用保存时记录的规范路径，确保打开的就是刚写入的合并文件
-        path = self._merged_file_path if self._merged_file_path else os.path.normpath(os.path.abspath(self.path_merged))
+        path = self._merged_file_path or os.path.normpath(os.path.abspath(self.path_merged))
         if not os.path.isfile(path):
             messagebox.showwarning("提示", "合并文件不存在：%s" % path)
             return
@@ -194,26 +337,58 @@ class MergeWindow:
         else:
             messagebox.showwarning("提示", "无法打开合并文件")
 
+    def _on_open_backup_merged(self):
+        if not self.merge_done or not self._backup_merged_path:
+            messagebox.showwarning("提示", "请先点击「生成合并结果」")
+            return
+        path = os.path.normpath(os.path.abspath(self._backup_merged_path))
+        if not os.path.isfile(path):
+            messagebox.showwarning("提示", "备份的合并文件不存在：%s" % path)
+            return
+        if open_excel_file(path):
+            gui_log("已打开备份的合并文件：%s" % path, self.status_var)
+        else:
+            messagebox.showwarning("提示", "无法打开备份文件")
+
     def _on_generate_merge(self):
-        for i, c in enumerate(self.conflicts):
-            var = self.conflict_vars[i] if i < len(self.conflict_vars) else None
-            c["_choice"] = "local" if (var and var.get() == "本地") else "remote"
+        options = self._get_options()
+        base_side = self._get_base_side()
+        d_choices = []
+        if "G" in options:
+            for var, obj, kind in self.conflict_vars:
+                choice = "local" if var.get() == "本地" else "remote"
+                d_choices.append({
+                    "sheet": obj["sheet"],
+                    "key": obj["key"],
+                    "choice": choice,
+                    "kind": "row" if kind == "row" else "column",
+                })
         try:
-            self._do_merge_with_choices()
+            code = do_merge(
+                self.path_local, self.path_base, self.path_remote, self.path_merged,
+                base_side=base_side, d_choices=d_choices if d_choices else None,
+                options=options,
+            )
+            if code != 0:
+                raise RuntimeError("合并返回码 %d" % code)
             self.merge_done = True
-            # 使用保存时记录的路径，与“打开合并结果”按钮一致
-            path = self._merged_file_path or os.path.normpath(os.path.abspath(self.path_merged))
-            gui_log("合并结果已生成：%s" % path, self.status_var)
-            messagebox.showinfo("完成", "合并结果已保存。\n将自动打开合并结果文件供您确认，确认无误后点击「确认无误并解决冲突」完成。")
+            self._merged_file_path = os.path.normpath(os.path.abspath(self.path_merged))
+            merged_dir = os.path.dirname(self._merged_file_path)
+            base_name = os.path.splitext(os.path.basename(self.path_merged))[0]
+            self._backup_merged_path = os.path.join(merged_dir, BACKUP_SUBDIR, base_name + "_merged.xlsx")
+            gui_log("合并结果已生成：%s" % self._merged_file_path, self.status_var)
+            messagebox.showinfo(
+                "完成",
+                "合并结果已保存。可点「打开合并结果」查看，确认无误后点击「确认无误并解决冲突」。"
+            )
             self.btn_merge.config(state=tk.DISABLED)
             self.btn_confirm.config(state=tk.NORMAL)
-            if path and os.path.isfile(path):
-                open_excel_file(path)
-                gui_log("已打开合并结果文件", self.status_var)
+            if os.path.isfile(self._merged_file_path):
+                open_excel_file(self._merged_file_path)
         except Exception as e:
             import traceback
             gui_log("合并失败: " + str(e), self.status_var, is_error=True)
-            messagebox.showerror("错误", str(e))
+            messagebox.showerror("错误", str(e) + "\n" + traceback.format_exc())
 
     def _on_confirm_done(self):
         if not self.merge_done:
@@ -234,83 +409,26 @@ class MergeWindow:
         if not sel:
             return
         item = sel[0]
-        idx = int(self.tree.item(item, "tags")[0])
-        if idx < 0 or idx >= len(self.conflicts):
+        tags = self.tree.item(item, "tags")
+        if not tags:
             return
-        c = self.conflicts[idx]
-        if c.get("_only_local"):
-            choice = "本地"
-        elif c.get("_only_remote"):
-            choice = "线上"
-        display = "将保留本地" if c.get("_only_local") else ("将保留线上" if c.get("_only_remote") else choice)
+        try:
+            idx = int(tags[0])
+        except ValueError:
+            return
+        if "G" not in self._get_options() or idx < 0 or idx >= len(self.conflict_vars):
+            return
+        var, obj, kind = self.conflict_vars[idx]
+        var.set(choice)
+        display = "将保留本地" if choice == "本地" else "将保留线上"
         vals = list(self.tree.item(item, "values"))
         vals[2] = display
         self.tree.item(item, values=vals)
-        if idx < len(self.conflict_vars):
-            self.conflict_vars[idx].set(choice)
 
     def _on_cancel(self):
         self.root.quit()
         self.root.destroy()
         sys.exit(1)
-
-    def _do_merge_with_choices(self):
-        yellow_fill = PatternFill(start_color="FFFF99", end_color="FFFF99", fill_type="solid")
-        merged_dir = os.path.dirname(os.path.abspath(self.path_merged))
-        base_name = os.path.splitext(os.path.basename(self.path_merged))[0]
-        backup_dir = os.path.join(merged_dir, BACKUP_SUBDIR)
-        choice_map = {}
-        for c in self.conflicts:
-            choice_map[(c["key"], c["sheet"])] = c.get("_choice", "local")
-        os.makedirs(os.path.dirname(self.path_merged) or ".", exist_ok=True)
-        shutil.copy2(self.path_local, self.path_merged)
-        wb_merged = openpyxl.load_workbook(self.path_merged, data_only=False)
-        for sheet_name in self.sheet_names:
-            sd = self.sheet_data[sheet_name]
-            if sheet_name not in wb_merged.sheetnames:
-                continue
-            ws = wb_merged[sheet_name]
-            key_to_row_l = sd.get("key_to_row_l") or {}
-            remote_rows = sd.get("remote_rows") or {}
-            local_rows = sd.get("local_rows") or {}
-            remote_ordered = sd.get("remote_ordered") or []
-            max_col = sd.get("max_col", 1)
-            local_set = set(local_rows)
-            remote_set = set(remote_rows)
-            only_remote_keys = [k for k in remote_ordered if k in (remote_set - local_set)]
-            for c in self.conflicts:
-                if c.get("_only_local") or c.get("_only_remote"):
-                    continue
-                s, key = c.get("sheet"), c.get("key")
-                if s != sheet_name:
-                    continue
-                if choice_map.get((key, s)) != "remote":
-                    continue
-                row_idx = key_to_row_l.get(key)
-                if row_idx is None:
-                    continue
-                row_data = list(remote_rows.get(key) or [])
-                while len(row_data) < max_col:
-                    row_data.append("")
-                for col_idx, val in enumerate(row_data[:max_col], start=1):
-                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
-                    cell.fill = yellow_fill
-            next_row = ws.max_row + 1
-            for key in only_remote_keys:
-                row_data = list(remote_rows.get(key) or [])
-                while len(row_data) < max_col:
-                    row_data.append("")
-                for col_idx, val in enumerate(row_data[:max_col], start=1):
-                    ws.cell(row=next_row, column=col_idx, value=val)
-                next_row += 1
-        wb_merged.save(self.path_merged)
-        wb_merged.close()
-        # 记录实际写入的规范路径，供“打开合并结果”使用，避免打开错文件或 Excel 缓存
-        self._merged_file_path = os.path.normpath(os.path.abspath(self.path_merged))
-        os.makedirs(backup_dir, exist_ok=True)
-        shutil.copy2(self.path_local, os.path.join(backup_dir, base_name + "_local.xlsx"))
-        shutil.copy2(self.path_remote, os.path.join(backup_dir, base_name + "_remote.xlsx"))
-        shutil.copy2(self.path_merged, os.path.join(backup_dir, base_name + "_merged.xlsx"))
 
     def run(self):
         self.root.mainloop()

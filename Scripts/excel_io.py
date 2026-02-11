@@ -219,3 +219,141 @@ def row_equal(a, b):
     if a is None or b is None:
         return a == b
     return [cell_str(c) for c in a] == [cell_str(c) for c in b]
+
+
+def col_equal(col_a, col_b):
+    """两列（两个 list）按单元格字符串逐格比较是否相等。"""
+    if col_a is col_b:
+        return True
+    if col_a is None or col_b is None:
+        return col_a == col_b
+    return [cell_str(c) for c in col_a] == [cell_str(c) for c in col_b]
+
+
+# -----------------------------------------------------------------------------
+# 前缀分组（用于新增行/列插入到同前缀组末尾）
+# -----------------------------------------------------------------------------
+
+def key_prefix(key_str):
+    """
+    从行 key 或列 key 字符串提取前缀，用于按前缀分组。
+    规则：取第一个分隔符（-、_、空格、制表）前的部分；若无分隔符则返回整串。
+    """
+    s = (key_str or "").strip()
+    if not s:
+        return ""
+    for sep in ("-", "_", " ", "\t"):
+        if sep in s:
+            return s.split(sep)[0].strip() or s
+    return s
+
+
+def row_keys_grouped_by_prefix(ordered_keys):
+    """
+    将有序行 key 列表按前缀分组，保持每组内顺序。
+    返回 [(prefix, [key1, key2, ...]), ...]，顺序为 key 首次出现的顺序。
+    """
+    groups = {}  # prefix -> list of keys in order
+    prefix_order = []  # order of first occurrence of each prefix
+    for k in ordered_keys:
+        p = key_prefix(k)
+        if p not in groups:
+            groups[p] = []
+            prefix_order.append(p)
+        groups[p].append(k)
+    return [(p, groups[p]) for p in prefix_order]
+
+
+def insertion_index_for_new_key(merged_ordered, new_key):
+    """
+    计算将 new_key 插入到 merged_ordered 的位置（同前缀组末尾）。
+    返回 0-based 插入位置；若基准中无该前缀则插到末尾。
+    """
+    p = key_prefix(new_key)
+    last_idx = -1
+    for i, k in enumerate(merged_ordered):
+        if key_prefix(k) == p:
+            last_idx = i
+    return last_idx + 1
+
+
+def merge_ordered_with_new_rows(base_ordered, new_ordered_keys):
+    """
+    在 base_ordered 中按「同前缀组末尾」规则插入 new_ordered_keys，返回新顺序。
+    不修改 base_ordered；new_ordered_keys 中若 key 已在 base 中则跳过（由调用方保证只传新增 key）。
+    """
+    base_set = set(base_ordered)
+    merged = list(base_ordered)
+    for k in new_ordered_keys:
+        if k in base_set:
+            continue
+        idx = insertion_index_for_new_key(merged, k)
+        merged.insert(idx, k)
+        base_set.add(k)
+    return merged
+
+
+# -----------------------------------------------------------------------------
+# 表头与列（用于新增列插入与冲突列）
+# -----------------------------------------------------------------------------
+
+def load_sheet_header(ws, max_col=None):
+    """
+    加载 Sheet 第一行作为表头，返回列 key 列表（cell_str）。
+    ws 为 None 或空时返回 []。
+    """
+    if ws is None:
+        return []
+    if max_col is None:
+        max_col = ws.max_column or 1
+    row = next(ws.iter_rows(min_row=1, max_row=1, max_col=max_col, values_only=True), None)
+    if not row:
+        return []
+    return [cell_str(c) for c in row]
+
+
+def load_sheet_header_normalized(ws, max_col=None):
+    """加载表头并做 key 规范化（与 key_str_normalized 一致），返回 list。"""
+    raw = load_sheet_header(ws, max_col)
+    return [key_str_normalized(c) for c in raw]
+
+
+def column_keys_grouped_by_prefix(ordered_col_keys):
+    """
+    将有序列 key 列表按前缀分组，同 row_keys_grouped_by_prefix。
+    返回 [(prefix, [col_key1, ...]), ...]。
+    """
+    groups = {}
+    prefix_order = []
+    for k in ordered_col_keys:
+        p = key_prefix(k)
+        if p not in groups:
+            groups[p] = []
+            prefix_order.append(p)
+        groups[p].append(k)
+    return [(p, groups[p]) for p in prefix_order]
+
+
+def insertion_index_for_new_col(merged_ordered_cols, new_col_key):
+    """计算将新列 key 插入到 merged 列顺序的位置（同前缀组末尾）。"""
+    return insertion_index_for_new_key(merged_ordered_cols, new_col_key)
+
+
+def merge_ordered_with_new_cols(base_ordered_cols, new_ordered_cols):
+    """在 base 列顺序中按同前缀组末尾插入新列 key，返回新顺序。"""
+    return merge_ordered_with_new_rows(base_ordered_cols, new_ordered_cols)
+
+
+def get_column_values(ws, col_index_1based, max_row=None):
+    """
+    读取 Sheet 中某一列的所有单元格值（从第 1 行到 max_row）。
+    合并单元格取区域左上角值。col_index_1based 为 1-based 列号。
+    """
+    if ws is None:
+        return []
+    if max_row is None:
+        max_row = ws.max_row or 1
+    return [
+        cell_str(get_merged_cell_value(ws, r, col_index_1based))
+        for r in range(1, max_row + 1)
+    ]
