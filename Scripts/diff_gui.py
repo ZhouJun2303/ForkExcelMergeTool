@@ -5,6 +5,7 @@
 
 import json
 import os
+import re
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -381,7 +382,43 @@ class DiffWindow:
         sb_a.pack(side=tk.RIGHT, fill=tk.Y)
         txt_b.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb_b.pack(side=tk.RIGHT, fill=tk.Y)
-        ttk.Button(win, text="关闭", command=win.destroy).pack(pady=(0, pad))
+
+        def _strip_line_numbers(text):
+            """去掉每行开头的 'N: ' 序号，便于粘贴到 Excel。"""
+            return "\n".join(re.sub(r"^\d+:\s*", "", line) for line in text.splitlines())
+
+        def _copy_without_numbers(widget):
+            try:
+                sel = widget.get(tk.SEL_FIRST, tk.SEL_LAST)
+                win.clipboard_clear()
+                win.clipboard_append(_strip_line_numbers(sel))
+            except tk.TclError:
+                pass
+            return "break"
+
+        txt_a.bind("<Control-c>", lambda e: _copy_without_numbers(txt_a))
+        txt_b.bind("<Control-c>", lambda e: _copy_without_numbers(txt_b))
+
+        def _copy_left():
+            win.clipboard_clear()
+            win.clipboard_append("\n".join(str(params_a[i]) if i < len(params_a) else "" for i in range(n)))
+        def _copy_right():
+            win.clipboard_clear()
+            win.clipboard_append("\n".join(str(params_b[i]) if i < len(params_b) else "" for i in range(n)))
+        def _copy_left_as_row():
+            win.clipboard_clear()
+            win.clipboard_append("\t".join(str(params_a[i]) if i < len(params_a) else "" for i in range(n)))
+        def _copy_right_as_row():
+            win.clipboard_clear()
+            win.clipboard_append("\t".join(str(params_b[i]) if i < len(params_b) else "" for i in range(n)))
+
+        btn_row = ttk.Frame(win, padding=(pad, 4))
+        btn_row.pack(fill=tk.X)
+        ttk.Button(btn_row, text="复制左侧成列", command=_copy_left).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row, text="复制右侧成列", command=_copy_right).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row, text="复制左侧成行", command=_copy_left_as_row).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row, text="复制右侧成行", command=_copy_right_as_row).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row, text="关闭", command=win.destroy).pack(side=tk.LEFT, padx=8)
 
     def _open_excel(self):
         if self.path_out and os.path.isfile(self.path_out):

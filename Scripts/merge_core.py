@@ -36,6 +36,28 @@ from excel_io import (
 from log_util import log
 
 
+def _log_merged_sheet_keys(path_merged, base_side, options, sheet_name="Data_Language"):
+    """合并完成后打日志：MERGED 中指定 sheet 的 key 数量及是否含 Store_DrawHero（便于排查基准/选项是否生效）。"""
+    try:
+        if not path_merged or not os.path.isfile(path_merged):
+            return
+        wb = openpyxl.load_workbook(path_merged, data_only=True)
+        if sheet_name not in wb.sheetnames:
+            wb.close()
+            return
+        ws = wb[sheet_name]
+        max_col = ws.max_column or 1
+        rows, _ = load_sheet_rows_full(ws, max_col)
+        keys = set(key_str_normalized(r[0]) if r else "" for r in rows)
+        keys.discard("")
+        has_draw = any((k or "").lower() == "store_drawhero" or ("store" in (k or "").lower() and "drawhero" in (k or "").lower()) for k in keys)
+        log("[Options] MERGED %s keys=%d Store_DrawHero=%s（基准=%s）" % (
+            sheet_name, len(keys), "有" if has_draw else "无", "本地" if base_side == "local" else "线上"))
+        wb.close()
+    except Exception as e:
+        log("[Options] MERGED 校验日志异常: %s" % e, is_error=True)
+
+
 # ---------------------------------------------------------------------------
 # 复制单元格样式与行高/列宽（保留原表格式）
 # ---------------------------------------------------------------------------
@@ -564,7 +586,10 @@ def _merge_delete_cols_impl(path_in, path_other_side, path_out):
         for c in range(len(header_in) - 1, -1, -1):
             h = header_in[c] if c < len(header_in) else ""
             if h and header_normalize_for_compare(h) not in keys_other_norm:
-                to_delete.append(c + 1)
+                col_1based = c + 1
+                # 禁止删除第 1 列（key 列），否则“仅本地有”的行会因 key 丢失而表现为整行丢失
+                if col_1based != 1:
+                    to_delete.append(col_1based)
         for col_idx in sorted(to_delete, reverse=True):
             ws_in.delete_cols(col_idx, 1)
     wb_other.close()
@@ -625,23 +650,28 @@ def _merge_mode_a_preserve_format(path_in, path_other_side, path_out, base_side)
             if k and i < len(idx_o):
                 key_to_rows_other.setdefault(k, []).append(idx_o[i])
         last_base_row = None
-        inserts = []
-        for k in merged_ordered:
+        inserts = []  # (insert_after, new_key, order_idx) 其中 order_idx 用于 insert_after=0 时保持 merged 顺序
+        for order_idx, k in enumerate(merged_ordered):
             if k in key_to_row_in:
                 last_base_row = key_to_row_in[k]
             elif k in key_to_rows_other:
-                # 新增 key 排在首行前时 last_base_row 为 None，用 0 表示插在表头后（第 1 行）
                 insert_after = (last_base_row if last_base_row is not None else 0)
-                inserts.append((insert_after, k))
-        for insert_after, new_key in sorted(inserts, key=lambda x: -x[0]):
+                inserts.append((insert_after, k, order_idx))
+        # 从高 insert_after 往低处理；同一 insert_after 内按 order_idx 倒序，这样先插的不会把后插的顶下去，最终顺序与 merged 一致
+        def _sort_key(item):
+            ia, key, oi = item[0], item[1], item[2]
+            if ia >= 1:
+                return (-ia, -oi, 0)
+            return (0, -oi, 0)  # insert_after=0 排最后，同组内 -order_idx 大的先处理
+        for insert_after, new_key, _ in sorted(inserts, key=_sort_key):
             other_rows = key_to_rows_other[new_key]
-            # 从下往上插入，保证顺序：先插最后一行到 insert_after+1，再插倒数第二行到 insert_after+1，…
+            insert_at_row = (insert_after + 1) if insert_after >= 1 else 2  # 0 时插在表头后（第 2 行）
             for i in range(len(other_rows) - 1, -1, -1):
                 other_row = other_rows[i]
-                ws_in.insert_rows(insert_after + 1, 1)
-                _shift_merged_cells_after_insert_rows(ws_in, insert_after + 1, 1)
-                _copy_row_with_style(ws_o, ws_in, other_row, insert_after + 1, max_col)
-                _copy_row_merged_ranges_to(ws_o, other_row, ws_in, insert_after + 1)
+                ws_in.insert_rows(insert_at_row, 1)
+                _shift_merged_cells_after_insert_rows(ws_in, insert_at_row, 1)
+                _copy_row_with_style(ws_o, ws_in, other_row, insert_at_row, max_col)
+                _copy_row_merged_ranges_to(ws_o, other_row, ws_in, insert_at_row)
     wb_other.close()
     os.makedirs(os.path.dirname(os.path.abspath(path_out)) or ".", exist_ok=True)
     wb_in.save(path_out)
@@ -688,10 +718,15 @@ def _merge_mode_b_preserve_format(path_in, path_other_side, path_out, base_side)
         max_row = max(ws_in.max_row or 1, ws_o.max_row or 1)
         for insert_after, col_key in sorted(inserts, key=lambda x: -x[0]):
             col_o = col_to_idx_o[col_key]
-            ws_in.insert_cols(insert_after + 1, 1)
-            _shift_merged_cells_after_insert_cols(ws_in, insert_after + 1, 1)
-            _copy_col_with_style(ws_o, ws_in, col_o, insert_after + 1, max_row)
-            _copy_col_merged_ranges_to(ws_o, col_o, ws_in, insert_after + 1)
+            # 禁止在列 1 前插入：插在列 1 会挤掉 key 列；插在列 2 会形成“双 key 列”导致错位。改为追加到表尾。
+            if insert_after >= 1:
+                insert_at_col = insert_after + 1
+            else:
+                insert_at_col = (ws_in.max_column or 1) + 1
+            ws_in.insert_cols(insert_at_col, 1)
+            _shift_merged_cells_after_insert_cols(ws_in, insert_at_col, 1)
+            _copy_col_with_style(ws_o, ws_in, col_o, insert_at_col, max_row)
+            _copy_col_merged_ranges_to(ws_o, col_o, ws_in, insert_at_col)
     wb_other.close()
     os.makedirs(os.path.dirname(os.path.abspath(path_out)) or ".", exist_ok=True)
     wb_in.save(path_out)
@@ -703,6 +738,11 @@ def _do_merge_by_options(path_local, path_base, path_remote, path_merged, option
     options = set(options or [])
     path_base_side = path_local if base_side == "local" else path_remote
     path_other_side = path_remote if base_side == "local" else path_local
+    log("[Options] 合并管道 基准=%s（%s 为底）勾选项=%s（仅当 C 勾选时执行删除行）" % (
+        "本地" if base_side == "local" else "线上",
+        "LOCAL" if base_side == "local" else "REMOTE",
+        sorted(options) or ["无"],
+    ))
     import tempfile
     fd, path_cur = tempfile.mkstemp(suffix=".xlsx", prefix="merge_opt_")
     os.close(fd)
@@ -714,6 +754,8 @@ def _do_merge_by_options(path_local, path_base, path_remote, path_merged, option
         if "C" in options:
             _merge_delete_rows_impl(path_cur, path_other_side, path_cur + ".tmp")
             os.replace(path_cur + ".tmp", path_cur)
+        else:
+            log("[Options] 跳过删除行（C 未勾选，基准侧独有行将保留）")
         if "B" not in options:
             _merge_mode_b_preserve_format(path_cur, path_other_side, path_cur + ".tmp", base_side)
             os.replace(path_cur + ".tmp", path_cur)
@@ -732,6 +774,7 @@ def _do_merge_by_options(path_local, path_base, path_remote, path_merged, option
             os.makedirs(os.path.dirname(os.path.abspath(path_merged)) or ".", exist_ok=True)
             shutil.copy2(path_cur, path_merged)
         log("[Options] 管道完成 MERGED=%s options=%s" % (path_merged, options))
+        _log_merged_sheet_keys(path_merged, base_side, options)
     finally:
         try:
             os.unlink(path_cur)

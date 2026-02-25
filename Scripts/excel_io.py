@@ -264,17 +264,38 @@ def row_keys_grouped_by_prefix(ordered_keys):
     return [(p, groups[p]) for p in prefix_order]
 
 
+def _common_prefix_len(a, b):
+    """两个字符串的公共前缀长度。"""
+    a, b = (a or ""), (b or "")
+    i = 0
+    while i < len(a) and i < len(b) and a[i] == b[i]:
+        i += 1
+    return i
+
+
+# 模糊匹配时要求公共前缀至少该长度，便于如 UIGearHeroInfo 与 UIGearHeroNewEntryTip 归到同一组
+_FUZZY_PREFIX_MIN_LEN = 4
+
+
 def insertion_index_for_new_key(merged_ordered, new_key):
     """
     计算将 new_key 插入到 merged_ordered 的位置（同前缀组末尾）。
-    返回 0-based 插入位置；若基准中无该前缀则插到末尾。
+    先尝试精确前缀匹配；若无则按公共前缀模糊匹配；再无则插到末尾。
+    返回 0-based 插入位置。
     """
-    p = key_prefix(new_key)
+    p_new = key_prefix(new_key)
     last_idx = -1
     for i, k in enumerate(merged_ordered):
-        if key_prefix(k) == p:
+        if key_prefix(k) == p_new:
             last_idx = i
-    return last_idx + 1
+    if last_idx >= 0:
+        return last_idx + 1
+    # 无精确前缀：按公共前缀模糊匹配，插到「最后一个与 new_key 有足够长公共前缀」的 key 之后
+    for i in range(len(merged_ordered) - 1, -1, -1):
+        p_cur = key_prefix(merged_ordered[i])
+        if _common_prefix_len(p_new, p_cur) >= _FUZZY_PREFIX_MIN_LEN:
+            return i + 1
+    return len(merged_ordered)
 
 
 def merge_ordered_with_new_rows(base_ordered, new_ordered_keys):

@@ -6,6 +6,7 @@
 
 import json
 import os
+import re
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -208,6 +209,8 @@ class MergeWindow:
         base_cb.current(0)
         base_cb.pack(side=tk.LEFT)
         base_cb.bind("<<ComboboxSelected>>", lambda e: self._on_options_or_base_changed())
+        hint_opts = ttk.Label(top, text="保留仅本地有的行（如 Store_DrawHero）并插入线上新增行：选基准=本地，不勾选 A 行不变、不勾选 C 删除行。", font=("Segoe UI", 8), foreground="gray")
+        hint_opts.pack(anchor=tk.W, pady=(2, 0))
 
         info_frame = ttk.LabelFrame(center, text="版本说明", padding=pad)
         info_frame.pack(fill=tk.X, pady=(0, 6))
@@ -446,6 +449,7 @@ class MergeWindow:
                 )
                 return
         options = self._get_options()
+        gui_log("生成合并结果，勾选项: %s（未勾选 C 则不删除行）" % ", ".join(sorted(options)) or "无", self.status_var)
         base_side = self._get_base_side()
         d_choices = []
         if "G" in options:
@@ -706,7 +710,42 @@ class MergeWindow:
         sb_a.pack(side=tk.RIGHT, fill=tk.Y)
         txt_b.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb_b.pack(side=tk.RIGHT, fill=tk.Y)
-        ttk.Button(win, text="关闭", command=win.destroy).pack(pady=(0, pad))
+
+        def _strip_line_numbers(text):
+            return "\n".join(re.sub(r"^\d+:\s*", "", line) for line in text.splitlines())
+
+        def _copy_without_numbers(widget):
+            try:
+                sel = widget.get(tk.SEL_FIRST, tk.SEL_LAST)
+                win.clipboard_clear()
+                win.clipboard_append(_strip_line_numbers(sel))
+            except tk.TclError:
+                pass
+            return "break"
+
+        txt_a.bind("<Control-c>", lambda e: _copy_without_numbers(txt_a))
+        txt_b.bind("<Control-c>", lambda e: _copy_without_numbers(txt_b))
+
+        def _copy_left():
+            win.clipboard_clear()
+            win.clipboard_append("\n".join(str(left_vals[i]) if i < len(left_vals) else "" for i in range(n)))
+        def _copy_right():
+            win.clipboard_clear()
+            win.clipboard_append("\n".join(str(right_vals[i]) if i < len(right_vals) else "" for i in range(n)))
+        def _copy_left_as_row():
+            win.clipboard_clear()
+            win.clipboard_append("\t".join(str(left_vals[i]) if i < len(left_vals) else "" for i in range(n)))
+        def _copy_right_as_row():
+            win.clipboard_clear()
+            win.clipboard_append("\t".join(str(right_vals[i]) if i < len(right_vals) else "" for i in range(n)))
+
+        btn_row = ttk.Frame(win, padding=(pad, 4))
+        btn_row.pack(fill=tk.X)
+        ttk.Button(btn_row, text="复制左侧成列", command=_copy_left).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row, text="复制右侧成列", command=_copy_right).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row, text="复制左侧成行", command=_copy_left_as_row).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row, text="复制右侧成行", command=_copy_right_as_row).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row, text="关闭", command=win.destroy).pack(side=tk.LEFT, padx=8)
 
     def _on_cancel(self):
         global _merge_instance
