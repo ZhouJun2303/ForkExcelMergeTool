@@ -209,8 +209,9 @@ def compute_conflicts_d(path_local, path_remote, path_base=None):
         max_col = max(ws_l.max_column or 1, ws_r.max_column or 1)
         max_row = max(ws_l.max_row or 1, ws_r.max_row or 1)
 
-        rows_l, idx_l = load_sheet_rows_full(ws_l, max_col)
-        rows_r, idx_r = load_sheet_rows_full(ws_r, max_col)
+        # 使用缓存加速合并单元格查找
+        rows_l, idx_l = load_sheet_rows_full(ws_l, max_col, use_cache=True)
+        rows_r, idx_r = load_sheet_rows_full(ws_r, max_col, use_cache=True)
         dict_l, _, ord_l = _dict_and_order(rows_l, idx_l)
         dict_r, _, ord_r = _dict_and_order(rows_r, idx_r)
         common_keys = set(dict_l) & set(dict_r)

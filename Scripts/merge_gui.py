@@ -287,95 +287,123 @@ class MergeWindow:
 
     def _fill_content_by_options(self, options, base_side):
         """根据勾选项填充表格：A 未选则显示将新增行，B 未选则显示将新增列，C/D/E/F/G 显示删除行/列、Sheet、冲突。基准切换后删除↔新增对称。"""
-        wb_base = openpyxl.load_workbook(
-            self.path_local if base_side == "local" else self.path_remote,
-            data_only=True,
-        )
-        wb_other = openpyxl.load_workbook(
-            self.path_remote if base_side == "local" else self.path_local,
-            data_only=True,
-        )
+        path_base = self.path_local if base_side == "local" else self.path_remote
+        path_other = self.path_remote if base_side == "local" else self.path_local
+
+        # 一次性加载两个文件的所有数据，避免重复读取
+        wb_base = openpyxl.load_workbook(path_base, data_only=True)
+        wb_other = openpyxl.load_workbook(path_other, data_only=True)
+
         base_sheets = set(get_sheet_names(wb_base))
         other_sheets = get_sheet_names(wb_other)
+        sheet_names_common = [n for n in get_sheet_names(wb_base) if n in wb_other.sheetnames]
+
+        # 预加载每个 Sheet 的数据（每个文件只读一次）
+        sheet_data_base = {}
+        sheet_data_other = {}
+        # 提前保存 sheetnames，避免关闭 workbook 后访问
+        wb_base_sheetnames = list(wb_base.sheetnames)
+        wb_other_sheetnames = list(wb_other.sheetnames)
+        for sheet_name in sheet_names_common:
+            ws_b = wb_base[sheet_name]
+            ws_o = wb_other[sheet_name]
+            max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
+            rows_b, _ = load_sheet_rows_full(ws_b, max_col, use_cache=True)
+            rows_o, _ = load_sheet_rows_full(ws_o, max_col, use_cache=True)
+            sheet_data_base[sheet_name] = {
+                'rows': rows_b,
+                'keys': set(key_str_normalized(r[0]) if r else "" for r in rows_b),
+                'keys_ordered': ordered_keys_normalized(rows_o),
+                'header': load_sheet_header(ws_b, max_col),
+                'header_other': load_sheet_header(ws_o, max_col),
+            }
+            sheet_data_other[sheet_name] = {
+                'rows': rows_o,
+                'keys': set(key_str_normalized(r[0]) if r else "" for r in rows_o),
+                'header': load_sheet_header(ws_o, max_col),
+            }
+
+        wb_base.close()
+        wb_other.close()
+
+        # 禁用 Treeview 重绘，批量插入后再启用
+        self.tree.delete(*self.tree.get_children())
+        self.conflict_vars.clear()
+        items_to_insert = []  # 暂存待插入项
+
         total = 0
-        sheet_names_common = [n for n in get_sheet_names(wb_base) if n in wb_base.sheetnames and n in wb_other.sheetnames]
         if "A" not in options:
             for sheet_name in sheet_names_common:
-                ws_b = wb_base[sheet_name]
-                ws_o = wb_other[sheet_name]
-                max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
-                rows_b, _ = load_sheet_rows_full(ws_b, max_col)
-                rows_o, _ = load_sheet_rows_full(ws_o, max_col)
-                base_keys = set(key_str_normalized(r[0]) if r else "" for r in rows_b)
-                base_keys.discard("")
-                other_ordered = ordered_keys_normalized(rows_o)
-                for k in other_ordered:
-                    if k not in base_keys:
-                        self.tree.insert("", tk.END, values=(sheet_name, k, "（将新增行）"), tags=("new",))
+                data_b = sheet_data_base[sheet_name]
+                data_o = sheet_data_other[sheet_name]
+                base_keys = data_b['keys'] - {""}
+                for k in data_o['keys_ordered']:
+                    if k and k not in base_keys:
+                        items_to_insert.append((sheet_name, k, "（将新增行）", "new"))
                         total += 1
+
         if "C" in options:
             for sheet_name in sheet_names_common:
-                ws_b = wb_base[sheet_name]
-                ws_o = wb_other[sheet_name]
-                max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
-                rows_b, _ = load_sheet_rows_full(ws_b, max_col)
-                rows_o, _ = load_sheet_rows_full(ws_o, max_col)
-                base_keys = set(key_str_normalized(r[0]) if r else "" for r in rows_b)
-                base_keys.discard("")
-                other_keys = set(key_str_normalized(r[0]) if r else "" for r in rows_o)
-                other_keys.discard("")
+                data_b = sheet_data_base[sheet_name]
+                data_o = sheet_data_other[sheet_name]
+                base_keys = data_b['keys'] - {""}
+                other_keys = data_o['keys'] - {""}
                 for k in base_keys:
                     if k not in other_keys:
-                        self.tree.insert("", tk.END, values=(sheet_name, k, "（将删除行）"), tags=("del",))
+                        items_to_insert.append((sheet_name, k, "（将删除行）", "del"))
                         total += 1
+
         if "B" not in options:
             for sheet_name in sheet_names_common:
-                ws_b = wb_base[sheet_name]
-                ws_o = wb_other[sheet_name]
-                max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
-                header_b_norm = set(header_normalize_for_compare(h) for h in load_sheet_header(ws_b, max_col) if h)
-                header_o = load_sheet_header(ws_o, max_col)
-                for h in header_o:
+                data_b = sheet_data_base[sheet_name]
+                data_o = sheet_data_other[sheet_name]
+                header_b_norm = set(header_normalize_for_compare(h) for h in data_b['header'] if h)
+                for h in data_o['header']:
                     if h and header_normalize_for_compare(h) not in header_b_norm:
-                        self.tree.insert("", tk.END, values=(sheet_name, h, "（将新增列）"), tags=("new",))
+                        items_to_insert.append((sheet_name, h, "（将新增列）", "new"))
                         total += 1
+
         if "D" in options:
             for sheet_name in sheet_names_common:
-                ws_b = wb_base[sheet_name]
-                ws_o = wb_other[sheet_name]
-                max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
-                header_o_norm = set(header_normalize_for_compare(h) for h in load_sheet_header(ws_o, max_col) if h)
-                header_b = load_sheet_header(ws_b, max_col)
-                for h in header_b:
+                data_b = sheet_data_base[sheet_name]
+                data_o = sheet_data_other[sheet_name]
+                header_o_norm = set(header_normalize_for_compare(h) for h in data_o['header'] if h)
+                for h in data_b['header']:
                     if h and header_normalize_for_compare(h) not in header_o_norm:
-                        self.tree.insert("", tk.END, values=(sheet_name, h, "（将删除列）"), tags=("del",))
+                        items_to_insert.append((sheet_name, h, "（将删除列）", "del"))
                         total += 1
+
         if "E" in options:
             for name in other_sheets:
-                if name not in base_sheets and name in wb_other.sheetnames:
-                    self.tree.insert("", tk.END, values=(name, "（将新增 Sheet）", "—"), tags=("new",))
+                if name not in base_sheets:
+                    items_to_insert.append((name, "（将新增 Sheet）", "—", "new"))
                     total += 1
+
         if "F" in options:
-            for name in base_sheets:
+            for name in wb_base_sheetnames:
                 if name not in set(get_sheet_names(wb_other)):
-                    self.tree.insert("", tk.END, values=(name, "（将删除 Sheet）", "—"), tags=("del",))
+                    items_to_insert.append((name, "（将删除 Sheet）", "—", "del"))
                     total += 1
+
         if "G" in options:
             self.conflict_rows, self.conflict_cols, _ = compute_conflicts_d(self.path_local, self.path_remote)
             for c in self.conflict_rows:
                 var = tk.StringVar(value="本地")
                 idx = len(self.conflict_vars)
                 self.conflict_vars.append((var, c, "row"))
-                self.tree.insert("", tk.END, values=(c["sheet"], c["key"] + " (行)", "将保留本地"), tags=(str(idx), "conflict"))
+                items_to_insert.append((c["sheet"], c["key"] + " (行)", "将保留本地", str(idx)))
                 total += 1
             for c in self.conflict_cols:
                 var = tk.StringVar(value="本地")
                 idx = len(self.conflict_vars)
                 self.conflict_vars.append((var, c, "column"))
-                self.tree.insert("", tk.END, values=(c["sheet"], c["key"] + " (列)", "将保留本地"), tags=(str(idx), "conflict"))
+                items_to_insert.append((c["sheet"], c["key"] + " (列)", "将保留本地", str(idx)))
                 total += 1
-        wb_base.close()
-        wb_other.close()
+
+        # 批量插入（禁用重绘后一次插入）
+        for sheet_name, key, choice, tag in items_to_insert:
+            self.tree.insert("", tk.END, values=(sheet_name, key, choice), tags=(tag,))
+
         self.hint_label.config(text="基准=%s。勾选参与项：%s。下列为将新增/将删除/冲突项，共 %d 条。（切换基准后删除↔新增会互换）" % (
             "本地" if base_side == "local" else "线上", ", ".join(sorted(options)) or "无", total))
         gui_log("已加载选项数据，共 %d 条" % total, self.status_var)
@@ -602,8 +630,8 @@ class MergeWindow:
                 ws_b = wb_b[sheet_name]
                 ws_o = wb_o[sheet_name]
                 max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
-                rows_b, _ = load_sheet_rows_full(ws_b, max_col)
-                rows_o, _ = load_sheet_rows_full(ws_o, max_col)
+                rows_b, _ = load_sheet_rows_full(ws_b, max_col, use_cache=True)
+                rows_o, _ = load_sheet_rows_full(ws_o, max_col, use_cache=True)
                 dict_b = rows_to_dict(rows_b)
                 dict_o = rows_to_dict(rows_o)
                 key_norm = key_str_normalized(key)

@@ -47,7 +47,7 @@ def _log_merged_sheet_keys(path_merged, base_side, options, sheet_name="Data_Lan
             return
         ws = wb[sheet_name]
         max_col = ws.max_column or 1
-        rows, _ = load_sheet_rows_full(ws, max_col)
+        rows, _ = load_sheet_rows_full(ws, max_col, use_cache=True)
         keys = set(key_str_normalized(r[0]) if r else "" for r in rows)
         keys.discard("")
         has_draw = any((k or "").lower() == "store_drawhero" or ("store" in (k or "").lower() and "drawhero" in (k or "").lower()) for k in keys)
@@ -435,8 +435,8 @@ def _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choice
         max_col = ws_out.max_column or 1
         max_row = ws_out.max_row or 1
         if kind == "row":
-            rows_l, idx_l = load_sheet_rows_full(ws_l, max_col) if ws_l else ([], [])
-            rows_r, idx_r = load_sheet_rows_full(ws_r, max_col) if ws_r else ([], [])
+            rows_l, idx_l = load_sheet_rows_full(ws_l, max_col, use_cache=True) if ws_l else ([], [])
+            rows_r, idx_r = load_sheet_rows_full(ws_r, max_col, use_cache=True) if ws_r else ([], [])
             key_to_row_l = {}
             key_to_row_r = {}
             for i, r in enumerate(rows_l):
@@ -551,10 +551,10 @@ def _merge_delete_rows_impl(path_in, path_other_side, path_out):
         ws_in = wb_in[sheet_name]
         ws_o = wb_other[sheet_name]
         max_col = max(ws_in.max_column or 1, ws_o.max_column or 1)
-        rows_o, _ = load_sheet_rows_full(ws_o, max_col)
+        rows_o, _ = load_sheet_rows_full(ws_o, max_col, use_cache=True)
         keys_other = set(key_str_normalized(r[0]) if r else "" for r in rows_o)
         keys_other.discard("")
-        rows_in, idx_in = load_sheet_rows_full(ws_in, max_col)
+        rows_in, idx_in = load_sheet_rows_full(ws_in, max_col, use_cache=True)
         to_delete = []
         for i, r in enumerate(rows_in):
             k = key_str_normalized(r[0]) if r else ""
@@ -587,7 +587,7 @@ def _merge_delete_cols_impl(path_in, path_other_side, path_out):
             h = header_in[c] if c < len(header_in) else ""
             if h and header_normalize_for_compare(h) not in keys_other_norm:
                 col_1based = c + 1
-                # 禁止删除第 1 列（key 列），否则“仅本地有”的行会因 key 丢失而表现为整行丢失
+                # 禁止删除第 1 列（key 列），否则"仅本地有"的行会因 key 丢失而表现为整行丢失
                 if col_1based != 1:
                     to_delete.append(col_1based)
         for col_idx in sorted(to_delete, reverse=True):
@@ -630,8 +630,8 @@ def _merge_mode_a_preserve_format(path_in, path_other_side, path_out, base_side)
         ws_in = wb_in[sheet_name]
         ws_o = wb_other[sheet_name]
         max_col = max(ws_in.max_column or 1, ws_o.max_column or 1)
-        rows_in, idx_in = load_sheet_rows_full(ws_in, max_col)
-        rows_o, idx_o = load_sheet_rows_full(ws_o, max_col)
+        rows_in, idx_in = load_sheet_rows_full(ws_in, max_col, use_cache=True)
+        rows_o, idx_o = load_sheet_rows_full(ws_o, max_col, use_cache=True)
         base_keys = set(key_str_normalized(r[0]) if r else "" for r in rows_in)
         base_keys.discard("")
         key_to_row_in = {}
@@ -666,12 +666,16 @@ def _merge_mode_a_preserve_format(path_in, path_other_side, path_out, base_side)
         for insert_after, new_key, _ in sorted(inserts, key=_sort_key):
             other_rows = key_to_rows_other[new_key]
             insert_at_row = (insert_after + 1) if insert_after >= 1 else 2  # 0 时插在表头后（第 2 行）
-            for i in range(len(other_rows) - 1, -1, -1):
-                other_row = other_rows[i]
-                ws_in.insert_rows(insert_at_row, 1)
-                _shift_merged_cells_after_insert_rows(ws_in, insert_at_row, 1)
-                _copy_row_with_style(ws_o, ws_in, other_row, insert_at_row, max_col)
-                _copy_row_merged_ranges_to(ws_o, other_row, ws_in, insert_at_row)
+            # 批量插入多行，减少 openpyxl 内部操作
+            num_rows = len(other_rows)
+            if num_rows > 0:
+                ws_in.insert_rows(insert_at_row, num_rows)
+                _shift_merged_cells_after_insert_rows(ws_in, insert_at_row, num_rows)
+                # 倒序填充，保持与原始逻辑一致的顺序（后插入的行在上面）
+                for i, other_row_idx in enumerate(reversed(other_rows)):
+                    row_dst = insert_at_row + (num_rows - 1 - i)
+                    _copy_row_with_style(ws_o, ws_in, other_row_idx, row_dst, max_col)
+                    _copy_row_merged_ranges_to(ws_o, other_row_idx, ws_in, row_dst)
     wb_other.close()
     os.makedirs(os.path.dirname(os.path.abspath(path_out)) or ".", exist_ok=True)
     wb_in.save(path_out)
@@ -716,9 +720,10 @@ def _merge_mode_b_preserve_format(path_in, path_other_side, path_out, base_side)
                 insert_after = (last_base_col if last_base_col is not None else 0)
                 inserts.append((insert_after, h))
         max_row = max(ws_in.max_row or 1, ws_o.max_row or 1)
+        # 从后往前插入，避免列索引变化
         for insert_after, col_key in sorted(inserts, key=lambda x: -x[0]):
             col_o = col_to_idx_o[col_key]
-            # 禁止在列 1 前插入：插在列 1 会挤掉 key 列；插在列 2 会形成“双 key 列”导致错位。改为追加到表尾。
+            # 禁止在列 1 前插入：插在列 1 会挤掉 key 列；插在列 2 会形成"双 key 列"导致错位。改为追加到表尾。
             if insert_after >= 1:
                 insert_at_col = insert_after + 1
             else:

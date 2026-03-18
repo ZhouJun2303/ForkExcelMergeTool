@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Excel 读写与行/Key 抽象。
-只做一件事：从 openpyxl 的 Workbook/Worksheet 读取或写入“按行、按首列 Key”的数据结构，
+只做一件事：从 openpyxl 的 Workbook/Worksheet 读取或写入"按行、按首列 Key"的数据结构，
 以及 Key 规范化、行相等判断，不包含合并算法或对比逻辑。
 """
 
@@ -59,11 +59,31 @@ def get_sheet_names(wb):
 # 合并单元格取值（openpyxl 仅左上格有值，其余为 None）
 # -----------------------------------------------------------------------------
 
-def get_merged_cell_value(ws, row, col):
+def build_merged_cells_cache(ws):
+    """
+    构建合并单元格的 O(1) 查找缓存。
+    返回 dict[(row, col)] = value，避免重复遍历 merged_cells.ranges。
+    """
+    cache = {}
+    try:
+        for rng in ws.merged_cells.ranges:
+            val = ws.cell(row=rng.min_row, column=rng.min_col).value
+            for r in range(rng.min_row, rng.max_row + 1):
+                for c in range(rng.min_col, rng.max_col + 1):
+                    cache[(r, c)] = val
+    except Exception:
+        pass
+    return cache
+
+
+def get_merged_cell_value(ws, row, col, merged_cache=None):
     """
     若 (row, col) 落在合并区域内，返回该区域左上角的值；
-    否则返回该格子的值。用于避免合并格导致首列“消失”。
+    否则返回该格子的值。用于避免合并格导致首列"消失"。
+    若提供 merged_cache 参数则使用 O(1) 查找，否则遍历 ranges。
     """
+    if merged_cache is not None:
+        return merged_cache.get((row, col), ws.cell(row=row, column=col).value)
     try:
         for rng in ws.merged_cells.ranges:
             if rng.min_row <= row <= rng.max_row and rng.min_col <= col <= rng.max_col:
@@ -98,11 +118,12 @@ def load_sheet_rows(ws, max_col=None):
     return rows
 
 
-def load_sheet_rows_full(ws, max_col=None):
+def load_sheet_rows_full(ws, max_col=None, use_cache=False):
     """
     加载 Sheet 所有行（不跳过首列为空的行，表头会保留）。
     合并单元格会用区域左上角的值填满整区域。
     返回 (rows, row_indices)，row_indices 为每行在 Sheet 中的 1-based 行号。
+    use_cache=True 时构建合并单元格缓存以加速大文件加载。
     """
     if ws is None:
         return [], []
@@ -118,11 +139,12 @@ def load_sheet_rows_full(ws, max_col=None):
         row_indices.append(row_idx)
     # 用合并区域左上角补齐空单元格
     try:
+        merged_cache = build_merged_cells_cache(ws) if use_cache else None
         for i in range(len(rows)):
             for col in range(max_col):
                 cur = rows[i][col]
                 if cur is None or (isinstance(cur, str) and cur.strip() == ""):
-                    v = get_merged_cell_value(ws, row_indices[i], col + 1)
+                    v = get_merged_cell_value(ws, row_indices[i], col + 1, merged_cache)
                     if v is not None:
                         rows[i][col] = v
     except Exception:
@@ -370,16 +392,18 @@ def merge_ordered_with_new_cols(base_ordered_cols, new_ordered_cols):
     return merge_ordered_with_new_rows(base_ordered_cols, new_ordered_cols)
 
 
-def get_column_values(ws, col_index_1based, max_row=None):
+def get_column_values(ws, col_index_1based, max_row=None, use_cache=False):
     """
     读取 Sheet 中某一列的所有单元格值（从第 1 行到 max_row）。
     合并单元格取区域左上角值。col_index_1based 为 1-based 列号。
+    use_cache=True 时构建合并单元格缓存以加速大文件加载。
     """
     if ws is None:
         return []
     if max_row is None:
         max_row = ws.max_row or 1
+    merged_cache = build_merged_cells_cache(ws) if use_cache else None
     return [
-        cell_str(get_merged_cell_value(ws, r, col_index_1based))
+        cell_str(get_merged_cell_value(ws, r, col_index_1based, merged_cache))
         for r in range(1, max_row + 1)
     ]

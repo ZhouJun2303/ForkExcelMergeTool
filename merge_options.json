@@ -2,9 +2,9 @@
   "A": false,
   "B": false,
   "C": false,
-  "D": true,
+  "D": false,
   "E": false,
   "F": false,
   "G": false,
-  "auto_open_merged": true
+  "auto_open_merged": false
 }
