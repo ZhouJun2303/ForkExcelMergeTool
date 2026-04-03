@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(git checkout:*)",
+      "Read(//d D:/MyGit/**)",
+      "Bash(.一键打包.bat --dist)",
+      "Bash(cmd /c \".\\\\一键打包.bat --dist\")",
+      "Bash(pip install:*)",
+      "Bash(pyinstaller:*)"
+    ]
+  }
+}

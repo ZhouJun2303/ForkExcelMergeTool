@@ -209,7 +209,7 @@ class MergeWindow:
         base_cb.current(0)
         base_cb.pack(side=tk.LEFT)
         base_cb.bind("<<ComboboxSelected>>", lambda e: self._on_options_or_base_changed())
-        hint_opts = ttk.Label(top, text="保留仅本地有的行（如 Store_DrawHero）并插入线上新增行：选基准=本地，不勾选 A 行不变、不勾选 C 删除行。", font=("Segoe UI", 8), foreground="gray")
+        hint_opts = ttk.Label(top, text="提示：不勾选A则插入线上新增行，不勾选B则插入线上新增列。勾选C/D则删除本地独有的行/列。勾选G则显示所有冲突项供选择。", font=("Segoe UI", 8), foreground="gray")
         hint_opts.pack(anchor=tk.W, pady=(2, 0))
 
         info_frame = ttk.LabelFrame(center, text="版本说明", padding=pad)
@@ -227,8 +227,9 @@ class MergeWindow:
 
         legend_merge = make_color_legend(center, [
             ("#008000", "绿色=新增"),
-            ("#CC6600", "橙色=修改"),
-            ("#CC0000", "红色=冲突"),
+            ("#FF6600", "橙色=删除冲突"),
+            ("#CC0000", "红色=修改冲突"),
+            ("#808080", "灰色=将删除"),
         ])
         legend_merge.pack(anchor=tk.W, pady=(0, 6))
 
@@ -244,7 +245,8 @@ class MergeWindow:
             self.tree.heading(c, text=c)
             self.tree.column(c, width=120 if c != "Key / 说明" else 280)
         self.tree.tag_configure("new", foreground="#008000", background="#E8F5E9")
-        self.tree.tag_configure("del", foreground="#CC6600", background="#FFF3E0")
+        self.tree.tag_configure("del", foreground="#808080", background="#F5F5F5")
+        self.tree.tag_configure("del_conflict", foreground="#FF6600", background="#FFF3E0")
         self.tree.tag_configure("conflict", foreground="#CC0000", background="#FFEBEE")
         self.tree.bind("<Double-1>", self._on_merge_tree_double_click)
         sb = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
@@ -313,13 +315,14 @@ class MergeWindow:
             sheet_data_base[sheet_name] = {
                 'rows': rows_b,
                 'keys': set(key_str_normalized(r[0]) if r else "" for r in rows_b),
-                'keys_ordered': ordered_keys_normalized(rows_o),
+                'keys_ordered': ordered_keys_normalized(rows_b),
                 'header': load_sheet_header(ws_b, max_col),
                 'header_other': load_sheet_header(ws_o, max_col),
             }
             sheet_data_other[sheet_name] = {
                 'rows': rows_o,
                 'keys': set(key_str_normalized(r[0]) if r else "" for r in rows_o),
+                'keys_ordered': ordered_keys_normalized(rows_o),
                 'header': load_sheet_header(ws_o, max_col),
             }
 
@@ -386,25 +389,57 @@ class MergeWindow:
                     total += 1
 
         if "G" in options:
-            self.conflict_rows, self.conflict_cols, _ = compute_conflicts_d(self.path_local, self.path_remote)
-            for c in self.conflict_rows:
-                var = tk.StringVar(value="本地")
-                idx = len(self.conflict_vars)
-                self.conflict_vars.append((var, c, "row"))
-                items_to_insert.append((c["sheet"], c["key"] + " (行)", "将保留本地", str(idx)))
-                total += 1
-            for c in self.conflict_cols:
-                var = tk.StringVar(value="本地")
-                idx = len(self.conflict_vars)
-                self.conflict_vars.append((var, c, "column"))
-                items_to_insert.append((c["sheet"], c["key"] + " (列)", "将保留本地", str(idx)))
-                total += 1
+            # 使用三向冲突检测（包含删除冲突识别）
+            from conflict import compute_conflicts
+            conflicts, _, _ = compute_conflicts(self.path_local, self.path_base, self.path_remote)
+            
+            # 定义冲突类型的显示配置
+            type_display = {
+                "add_local": ("（仅本地新增）", "new", False),  # 不需要选择，由A选项控制
+                "add_remote": ("（仅线上新增）", "new", False),  # 不需要选择，由A选项控制
+                "add_conflict": (" (新增冲突)", "conflict", True),
+                "delete_conflict_local": (" (删除冲突：本地删)", "del_conflict", True),
+                "delete_conflict_remote": (" (删除冲突：线上删)", "del_conflict", True),
+                "modify_conflict": (" (修改冲突)", "conflict", True),
+            }
+            
+            for c in conflicts:
+                conflict_type = c.get("type", "modify_conflict")
+                suffix, tag, need_choice = type_display.get(conflict_type, (" (冲突)", "conflict", True))
+                
+                if need_choice:
+                    # 需要用户选择的冲突
+                    var = tk.StringVar(value="本地")
+                    idx = len(self.conflict_vars)
+                    self.conflict_vars.append((var, c, "row"))
+                    
+                    # 根据冲突类型显示不同的描述和默认值
+                    if conflict_type == "delete_conflict_local":
+                        choice_text = "将保留线上（本地已删）"
+                        var.set("线上")  # 默认保留线上
+                    elif conflict_type == "delete_conflict_remote":
+                        choice_text = "将保留本地（线上已删）"
+                        var.set("本地")  # 默认保留本地
+                    else:
+                        choice_text = "将保留本地"
+                        var.set("本地")
+                    
+                    items_to_insert.append((c["sheet"], c["key"] + suffix, choice_text, tag))
+                    total += 1
+                else:
+                    # 仅信息展示的项（单方新增，由A选项控制是否插入）
+                    if conflict_type == "add_local":
+                        choice_text = "（信息）本地新增"
+                    else:
+                        choice_text = "（信息）线上新增"
+                    items_to_insert.append((c["sheet"], c["key"] + suffix, choice_text, tag))
+                    total += 1
 
         # 批量插入（禁用重绘后一次插入）
         for sheet_name, key, choice, tag in items_to_insert:
             self.tree.insert("", tk.END, values=(sheet_name, key, choice), tags=(tag,))
 
-        self.hint_label.config(text="基准=%s。勾选参与项：%s。下列为将新增/将删除/冲突项，共 %d 条。（切换基准后删除↔新增会互换）" % (
+        self.hint_label.config(text="基准=%s。勾选参与项：%s。下列为将新增/将删除/冲突项，共 %d 条。（切换基准后删除↔新增会互换）\n提示：单方新增行由【A 行不变】选项控制（不勾选A则插入新增行），冲突项可在下方选择保留哪方。" % (
             "本地" if base_side == "local" else "线上", ", ".join(sorted(options)) or "无", total))
         gui_log("已加载选项数据，共 %d 条" % total, self.status_var)
 
@@ -568,7 +603,7 @@ class MergeWindow:
         self.tree.item(item, values=vals)
 
     def _on_merge_tree_double_click(self, event):
-        """双击列表行：打开详情面板，左右对比（本地 vs 线上）完整显示。"""
+        """双击列表行：打开详情面板，显示 BASE | LOCAL | REMOTE 三列对比。"""
         sel = self.tree.selection()
         if not sel:
             return
@@ -578,24 +613,36 @@ class MergeWindow:
         if len(vals) < 3:
             return
         sheet_or_name, key_or_col, choice = vals[0], vals[1], vals[2]
-        if "conflict" in tags:
+        
+        # 处理冲突项（带索引tag）
+        if tags and tags[0] not in ("new", "del", "del_conflict", "conflict"):
             try:
                 idx = int(tags[0])
+                if 0 <= idx < len(self.conflict_vars):
+                    var, c, kind = self.conflict_vars[idx]
+                    conflict_type = c.get("type", "modify_conflict")
+                    
+                    # 提取三方数据
+                    base_vals = [cell_str(x) for x in (c.get("base_row") or [])]
+                    local_vals = [cell_str(x) for x in (c.get("local_row") or [])]
+                    remote_vals = [cell_str(x) for x in (c.get("remote_row") or [])]
+                    
+                    # 根据冲突类型设置标题
+                    type_names = {
+                        "add_conflict": "新增冲突",
+                        "delete_conflict_local": "删除冲突（本地删除）",
+                        "delete_conflict_remote": "删除冲突（线上删除）",
+                        "modify_conflict": "修改冲突",
+                    }
+                    type_name = type_names.get(conflict_type, "冲突")
+                    title = "%s — %s / %s" % (type_name, c["sheet"], c["key"])
+                    
+                    self._show_merge_detail_panel_three(title, base_vals, local_vals, remote_vals, conflict_type)
+                    return
             except (ValueError, IndexError):
-                return
-            if idx < 0 or idx >= len(self.conflict_vars):
-                return
-            var, c, kind = self.conflict_vars[idx]
-            if kind == "row":
-                left_vals = [cell_str(x) for x in c["local_row"]]
-                right_vals = [cell_str(x) for x in c["remote_row"]]
-                title = "冲突行 — %s / %s" % (c["sheet"], c["key"])
-            else:
-                left_vals = [cell_str(x) for x in c["local_col"]]
-                right_vals = [cell_str(x) for x in c["remote_col"]]
-                title = "冲突列 — %s / %s" % (c["sheet"], c["key"])
-            self._show_merge_detail_panel(title, "本地", "线上", left_vals, right_vals)
-            return
+                pass
+        
+        # 处理非冲突项（新增/删除）
         base_side = self._get_base_side()
         if choice == "（将新增行）":
             path_base = self.path_local if base_side == "local" else self.path_remote
@@ -680,6 +727,96 @@ class MergeWindow:
         except Exception:
             pass
         return (left, right)
+
+    def _show_merge_detail_panel_three(self, title, base_vals, local_vals, remote_vals, conflict_type):
+        """弹出 Toplevel：三栏显示 BASE | LOCAL | REMOTE，高亮差异。"""
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.minsize(900, 500)
+        win.geometry("1200x600")
+        pad = 8
+        
+        # 顶部说明
+        header = ttk.Frame(win, padding=(pad, pad))
+        header.pack(fill=tk.X)
+        
+        # 根据冲突类型显示不同的说明
+        if conflict_type == "delete_conflict_local":
+            hint = "本地删除了此行，线上保留/修改了此行"
+        elif conflict_type == "delete_conflict_remote":
+            hint = "线上删除了此行，本地保留/修改了此行"
+        elif conflict_type == "add_conflict":
+            hint = "BASE中不存在，双方都新增了此行但内容不同"
+        else:
+            hint = "BASE中存在，双方都修改了此行但内容不同"
+        
+        ttk.Label(header, text=hint, font=("Segoe UI", 9), foreground="#666").pack(anchor=tk.W)
+        
+        # 三栏布局
+        cols_frame = ttk.Frame(win)
+        cols_frame.pack(fill=tk.BOTH, expand=True, padx=pad, pady=(0, pad))
+        
+        # 创建三个列
+        frames = []
+        texts = []
+        labels = [("BASE", base_vals), ("LOCAL", local_vals), ("REMOTE", remote_vals)]
+        
+        for i, (label, vals) in enumerate(labels):
+            col = ttk.Frame(cols_frame)
+            col.grid(row=0, column=i, sticky="nsew", padx=2)
+            cols_frame.columnconfigure(i, weight=1)
+            
+            # 列标题
+            lbl_frame = ttk.Frame(col)
+            lbl_frame.pack(fill=tk.X)
+            ttk.Label(lbl_frame, text=label, font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=4)
+            
+            # 文本框
+            txt = tk.Text(col, wrap=tk.WORD, font=("Consolas", 9), padx=6, pady=6)
+            sb = ttk.Scrollbar(col, orient=tk.VERTICAL, command=txt.yview)
+            
+            # 填充内容
+            if vals:
+                lines = "\n".join("%d: %s" % (j + 1, v) for j, v in enumerate(vals))
+            else:
+                lines = "(不存在)"
+            txt.insert(tk.END, lines)
+            txt.config(state=tk.DISABLED)
+            
+            txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            sb.pack(side=tk.RIGHT, fill=tk.Y)
+            txt.config(yscrollcommand=sb.set)
+            
+            frames.append(col)
+            texts.append(txt)
+        
+        cols_frame.rowconfigure(0, weight=1)
+        
+        # 高亮差异
+        n = max(len(base_vals), len(local_vals), len(remote_vals))
+        for txt in texts:
+            txt.tag_configure("diff", background="#FFF3E0", foreground="#CC6600")
+            txt.tag_configure("missing", background="#FFEBEE", foreground="#999")
+        
+        for i in range(n):
+            vb = str(base_vals[i]).strip() if i < len(base_vals) else ""
+            vl = str(local_vals[i]).strip() if i < len(local_vals) else ""
+            vr = str(remote_vals[i]).strip() if i < len(remote_vals) else ""
+            
+            # 标记差异
+            if vb != vl or vb != vr or vl != vr:
+                line_start = "%d.0" % (i + 1)
+                line_end = "%d.0" % (i + 2)
+                for j, (txt, val) in enumerate([(texts[0], vb), (texts[1], vl), (texts[2], vr)]):
+                    try:
+                        txt.config(state=tk.NORMAL)
+                        if not val:
+                            txt.tag_add("missing", line_start, line_end)
+                        else:
+                            txt.tag_add("diff", line_start, line_end)
+                        txt.config(state=tk.DISABLED)
+                    except tk.TclError:
+                        pass
 
     def _show_merge_detail_panel(self, title, label_left, label_right, left_vals, right_vals):
         """弹出 Toplevel：左右两栏显示完整参数，每参数一行，双栏滚动同步。"""

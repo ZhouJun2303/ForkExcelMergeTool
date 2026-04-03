@@ -7,13 +7,15 @@
   k2: 仅 LOCAL 修改
   k3: 仅 REMOTE 修改
   k4: 两边同改（相同值）
-  k5: 两边异改 -> 冲突（取 LOCAL 标红）
-  k6: LOCAL 删除（取 REMOTE）
-  k7: REMOTE 删除（取 LOCAL）
+  k5: 两边异改 -> 修改冲突
+  k6: LOCAL 删除 -> 删除冲突
+  k7: REMOTE 删除 -> 删除冲突
   k8: 仅 LOCAL 新增
   k9: 仅 REMOTE 新增
   k10: 两边同增同值
-  k11: 两边异增 -> 冲突（取 LOCAL 标红）
+  k11: 两边异增 -> 新增冲突
+  k12: 双方都删除 -> 无冲突
+  k13: LOCAL删除，REMOTE修改 -> 删除冲突
 
 Sheet Data2: 多 Sheet 测试，a/b 有修改、c/d 分别新增
 """
@@ -35,28 +37,17 @@ def main():
 
     out_dir = _dir_of_script()
 
-    # Sheet1: 主测试表，覆盖所有场景
-    # k1: 无变化
-    # k2: 仅 LOCAL 修改
-    # k3: 仅 REMOTE 修改
-    # k4: 两边同改（相同值）
-    # k5: 两边异改 -> 冲突
-    # k6: LOCAL 删除（base+remote 有，local 无）
-    # k7: REMOTE 删除（base+local 有，remote 无）
-    # k8: 仅 LOCAL 新增
-    # k9: 仅 REMOTE 新增
-    # k10: 两边同增（相同值）
-    # k11: 两边异增 -> 冲突
-
     base_rows = [
         ["Key", "Col1", "Col2"],
         ["k1", "v1", "v1"],   # 无变化
         ["k2", "v2", "v2"],   # 仅 local 改
         ["k3", "v3", "v3"],   # 仅 remote 改
         ["k4", "v4", "v4"],   # 两边同改
-        ["k5", "v5", "v5"],   # 两边异改-冲突
-        ["k6", "v6", "v6"],   # local 删
-        ["k7", "v7", "v7"],   # remote 删
+        ["k5", "v5", "v5"],   # 两边异改-修改冲突
+        ["k6", "v6", "v6"],   # local 删-删除冲突
+        ["k7", "v7", "v7"],   # remote 删-删除冲突
+        ["k12", "v12", "v12"], # 双方都删-无冲突
+        ["k13", "v13", "v13"], # local删remote改-删除冲突
     ]
 
     local_rows = [
@@ -68,42 +59,13 @@ def main():
         ["k5", "v5_L", "v5_L"],
         # k6 删除
         ["k7", "v7", "v7"],
-        ["k8", "v8", "v8"],
-        ["k9", "v9_L", "v9_L"],   # 两边同增-相同则取一即可，这里 local 先有
-        ["k10", "v10_L", "v10_L"],
-        ["k11", "v11_L", "v11_L"],
-    ]
-
-    remote_rows = [
-        ["Key", "Col1", "Col2"],
-        ["k1", "v1", "v1"],
-        ["k2", "v2", "v2"],
-        ["k3", "v3_R", "v3_R"],
-        ["k4", "v4_both", "v4_both"],
-        ["k5", "v5_R", "v5_R"],
-        ["k6", "v6", "v6"],
-        ["k8", "v8", "v8"],       # 仅 remote 新增（base 无，local 无）
-        ["k9", "v9_L", "v9_L"],   # 两边同增相同
-        ["k10", "v10_R", "v10_R"],
-        ["k11", "v11_R", "v11_R"],
-    ]
-
-    # 重新梳理：
-    # k8: 仅 LOCAL 新增 -> remote 无 k8
-    # k9: 仅 REMOTE 新增 -> local 无 k9？不对，k10/k11 是两边都有
-    # 设：k8 仅 local, k9 仅 remote, k10 两边同增同值, k11 两边异增
-    local_rows = [
-        ["Key", "Col1", "Col2"],
-        ["k1", "v1", "v1"],
-        ["k2", "v2_L", "v2_L"],
-        ["k3", "v3", "v3"],
-        ["k4", "v4_both", "v4_both"],
-        ["k5", "v5_L", "v5_L"],
-        ["k7", "v7", "v7"],
         ["k8", "v8", "v8"],       # 仅 local 新增
         ["k10", "v10_both", "v10_both"],  # 两边同增同值
-        ["k11", "v11_L", "v11_L"],        # 两边异增-冲突
+        ["k11", "v11_L", "v11_L"],        # 两边异增-新增冲突
+        # k12 删除
+        # k13 删除
     ]
+
     remote_rows = [
         ["Key", "Col1", "Col2"],
         ["k1", "v1", "v1"],
@@ -112,9 +74,12 @@ def main():
         ["k4", "v4_both", "v4_both"],
         ["k5", "v5_R", "v5_R"],
         ["k6", "v6", "v6"],
+        # k7 删除
         ["k9", "v9", "v9"],       # 仅 remote 新增
         ["k10", "v10_both", "v10_both"],
         ["k11", "v11_R", "v11_R"],
+        # k12 删除
+        ["k13", "v13_R_modified", "v13_R_modified"], # remote修改
     ]
 
     def write_xlsx(path, sheets_dict):
@@ -144,7 +109,7 @@ def main():
     write_xlsx(os.path.join(out_dir, "remote.xlsx"), {"Data": remote_rows, "Data2": remote_sheet2})
 
     print("OK: 已生成 base.xlsx, local.xlsx, remote.xlsx（含 Data/Data2 两 Sheet）", file=sys.stdout)
-    print("场景: k1无改 k2仅L改 k3仅R改 k4两边同改 k5冲突 k6 L删 k7 R删 k8仅L增 k9仅R增 k10两边同增 k11两边异增", file=sys.stdout)
+    print("场景: k1无改 k2仅L改 k3仅R改 k4两边同改 k5修改冲突 k6删除冲突(L删) k7删除冲突(R删) k8仅L增 k9仅R增 k10两边同增 k11新增冲突 k12双删 k13删除冲突(L删R改)", file=sys.stdout)
     sys.exit(0)
 
 

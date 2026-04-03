@@ -118,39 +118,95 @@ def compute_conflicts(path_local, path_base, path_remote):
             row_l = dict_l.get(key)
             row_r = dict_r.get(key)
             row_b = dict_b.get(key)
-            if row_l is not None and row_r is not None:
-                if row_equal(row_l, row_r):
+            
+            # 场景1：BASE无 - 新增相关
+            if row_b is None:
+                if row_l is not None and row_r is not None:
+                    # 双方都新增
+                    if row_equal(row_l, row_r):
+                        # 新增相同内容，无冲突
+                        continue
+                    else:
+                        # 新增不同内容，冲突
+                        n_conflict_sheet += 1
+                        conflicts.append({
+                            "sheet": sheet_name,
+                            "key": key,
+                            "type": "add_conflict",
+                            "local_row": row_l,
+                            "remote_row": row_r,
+                            "base_row": None,
+                        })
+                elif row_l is not None:
+                    # 仅本地新增
+                    conflicts.append({
+                        "sheet": sheet_name,
+                        "key": key,
+                        "type": "add_local",
+                        "local_row": row_l,
+                        "remote_row": None,
+                        "base_row": None,
+                        "_only_local": True,
+                    })
+                elif row_r is not None:
+                    # 仅线上新增
+                    conflicts.append({
+                        "sheet": sheet_name,
+                        "key": key,
+                        "type": "add_remote",
+                        "local_row": None,
+                        "remote_row": row_r,
+                        "base_row": None,
+                        "_only_remote": True,
+                    })
+            
+            # 场景2：BASE有，至少一方删除
+            elif row_l is None or row_r is None:
+                if row_l is None and row_r is None:
+                    # 双方都删除，无冲突
                     continue
-                if row_b is None or (not row_equal(row_b, row_l) and not row_equal(row_b, row_r)):
+                elif row_l is None:
+                    # 本地删除，线上保留/修改 → 删除冲突
                     n_conflict_sheet += 1
                     conflicts.append({
                         "sheet": sheet_name,
                         "key": key,
+                        "type": "delete_conflict_local",
+                        "local_row": None,
+                        "remote_row": row_r,
+                        "base_row": row_b,
+                        "_delete_conflict": True,
+                    })
+                else:
+                    # 线上删除，本地保留/修改 → 删除冲突
+                    n_conflict_sheet += 1
+                    conflicts.append({
+                        "sheet": sheet_name,
+                        "key": key,
+                        "type": "delete_conflict_remote",
+                        "local_row": row_l,
+                        "remote_row": None,
+                        "base_row": row_b,
+                        "_delete_conflict": True,
+                    })
+            
+            # 场景3：BASE有，双方都有
+            else:
+                if row_equal(row_l, row_r):
+                    # 双方相同，无冲突
+                    continue
+                # 双方不同，检查是否为冲突
+                if not row_equal(row_b, row_l) and not row_equal(row_b, row_r):
+                    # 双方都修改且不同 → 修改冲突
+                    n_conflict_sheet += 1
+                    conflicts.append({
+                        "sheet": sheet_name,
+                        "key": key,
+                        "type": "modify_conflict",
                         "local_row": row_l,
                         "remote_row": row_r,
                         "base_row": row_b,
                     })
-
-        only_local_set = local_set - remote_set
-        only_remote_set = remote_set - local_set
-        for k in only_local_set:
-            conflicts.append({
-                "sheet": sheet_name,
-                "key": k,
-                "local_row": dict_l.get(k),
-                "remote_row": None,
-                "base_row": dict_b.get(k),
-                "_only_local": True,
-            })
-        for k in only_remote_set:
-            conflicts.append({
-                "sheet": sheet_name,
-                "key": k,
-                "local_row": None,
-                "remote_row": dict_r.get(k),
-                "base_row": dict_b.get(k),
-                "_only_remote": True,
-            })
 
         sheet_data[sheet_name] = {
             "base_rows": dict_b,
