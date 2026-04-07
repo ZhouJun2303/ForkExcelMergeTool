@@ -78,6 +78,41 @@ def open_excel_file(path):
         return False
 
 
+def open_containing_folder(path, select_file=True):
+    """
+    打开文件所在文件夹。
+    - Windows: 优先 explorer /select 选中文件；失败则打开目录
+    - macOS: open -R
+    - Linux: xdg-open 目录
+    """
+    if not path:
+        return False
+    try:
+        abs_path = os.path.abspath(path)
+        folder = abs_path if os.path.isdir(abs_path) else os.path.dirname(abs_path)
+        if not folder:
+            return False
+        if sys.platform == "win32":
+            if select_file and os.path.isfile(abs_path):
+                try:
+                    subprocess.run(["explorer", "/select,", abs_path], check=False)
+                    return True
+                except Exception:
+                    pass
+            os.startfile(folder)
+            return True
+        if sys.platform == "darwin":
+            if select_file and os.path.exists(abs_path):
+                subprocess.run(["open", "-R", abs_path], check=False)
+            else:
+                subprocess.run(["open", folder], check=False)
+            return True
+        subprocess.run(["xdg-open", folder], check=False)
+        return True
+    except Exception:
+        return False
+
+
 def setup_merge_styles(root):
     """为合并/对比窗口配置统一样式：Segoe UI、浅灰背景、主按钮突出。"""
     style = ttk.Style(root)

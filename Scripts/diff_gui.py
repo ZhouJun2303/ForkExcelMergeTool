@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from compare_core import get_compare_data, write_compare_excel
-from gui_common import gui_log, make_color_legend, open_excel_file, setup_merge_styles
+from gui_common import gui_log, make_color_legend, open_containing_folder, open_excel_file, setup_merge_styles
 from log_util import merge_options_path, release_compare_lock
 from version import __version__ as APP_VERSION
 
@@ -208,8 +208,19 @@ class DiffWindow:
         ttk.Button(title_row, text="互换基准", command=self._on_swap_baseline).pack(side=tk.LEFT, padx=(16, 0))
         self.path_a_var = tk.StringVar(self.root)
         self.path_b_var = tk.StringVar(self.root)
-        ttk.Label(top, textvariable=self.path_a_var, font=("Segoe UI", 8)).pack(anchor=tk.W)
-        ttk.Label(top, textvariable=self.path_b_var, font=("Segoe UI", 8)).pack(anchor=tk.W)
+
+        path_row_a = ttk.Frame(top)
+        path_row_a.pack(fill=tk.X, pady=(2, 0))
+        ttk.Label(path_row_a, textvariable=self.path_a_var, font=("Segoe UI", 8)).pack(side=tk.LEFT, anchor=tk.W)
+        ttk.Button(path_row_a, text="打开", command=lambda: self._open_side_file("a")).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(path_row_a, text="打开所在位置", command=lambda: self._open_side_folder("a")).pack(side=tk.RIGHT)
+
+        path_row_b = ttk.Frame(top)
+        path_row_b.pack(fill=tk.X, pady=(2, 0))
+        ttk.Label(path_row_b, textvariable=self.path_b_var, font=("Segoe UI", 8)).pack(side=tk.LEFT, anchor=tk.W)
+        ttk.Button(path_row_b, text="打开", command=lambda: self._open_side_file("b")).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(path_row_b, text="打开所在位置", command=lambda: self._open_side_folder("b")).pack(side=tk.RIGHT)
+
         ttk.Label(top, text="（本窗口为二向对比；合并选项 A–G 仅在「合并」时出现，需传入 4 个文件）", font=("Segoe UI", 8), foreground="gray").pack(anchor=tk.W)
         legend_frame = tk.Frame(self.root, bg="#f0f2f5")
         legend_frame.pack(fill=tk.X, padx=pad, pady=(0, 6))
@@ -277,6 +288,24 @@ class DiffWindow:
             command=lambda: _save_auto_open_compare(self.auto_open_var.get()),
         ).pack(side=tk.LEFT, padx=(0, 12))
         ttk.Button(btn_frame, text="关闭", command=self._on_close).pack(side=tk.LEFT)
+
+    def _open_side_file(self, side):
+        """打开当前 A/B 的原始 Excel 文件。side: 'a' | 'b'"""
+        self._apply_baseline()
+        path = self.path_a if side == "a" else self.path_b
+        if path and os.path.isfile(path):
+            open_excel_file(path)
+            gui_log("已打开 %s 文件" % ("A" if side == "a" else "B"), self.status_var)
+        else:
+            messagebox.showwarning("提示", "文件不存在")
+
+    def _open_side_folder(self, side):
+        """打开当前 A/B 的所在位置。side: 'a' | 'b'"""
+        self._apply_baseline()
+        path = self.path_a if side == "a" else self.path_b
+        ok = open_containing_folder(path, select_file=True)
+        if not ok:
+            messagebox.showwarning("提示", "无法打开所在位置")
 
     def _on_diff_filter_changed(self):
         """筛选勾选变化：持久化并刷新列表。"""
