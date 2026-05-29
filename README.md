@@ -154,7 +154,7 @@ python Scripts\MergeExcelFork.py <线上文件REMOTE> <本地文件LOCAL>
 可能原因与处理：
 
 1. **首列是“行关键列”**：工具用**每个 Sheet 的第一列**作为行的唯一标识（Key）。若第一列是空的或不是关键列，可能识别不到冲突。请保证三个文件（本地、基准、线上）的**第一列都是同一套关键值**（如编号、ID、姓名等）。
-2. **用 exe 时请用最新版**：若你用的是打包的 `ExcelMergeFork.exe`，请用**重新打包后的最新 exe**（运行项目里的 `一键打包.bat` 生成），否则可能仍是旧逻辑。
+2. **用 exe 时请用最新版**：若你用的是打包的 `ExcelMergeFork.exe`，请用**重新打包后的最新 exe**（运行项目里的 `package.bat` 生成），否则可能仍是旧逻辑。
 3. **看日志**：与 exe 同目录下的 **`MergeExcelFork.log`** 里会有本次合并的统计，例如：  
    `[MERGE] Sheet=Sheet1 行数 local=10 base=10 remote=10 all_keys=10 冲突=2`  
    可根据「行数」「all_keys」「冲突」判断是否读到了数据、算出了冲突。
@@ -201,8 +201,8 @@ python Scripts\MergeExcelFork.py <线上文件REMOTE> <本地文件LOCAL>
 
 ## 九、给开发者：打包与测试
 
-- **一键打包**：双击 **`一键打包.bat`**，会自动安装依赖、打包 exe、并做一次快速验证。
-- **一键打包并发布 Release**：执行 `一键打包.bat --gui --test --release`。需要本机已安装 GitHub CLI，并先执行过 `gh auth login`。
+- **一键打包**：双击 **`package.bat`**，会自动安装依赖、打包 exe、并做一次快速验证。
+- **一键发布 Release**：维护者直接双击或执行 **`publish-release.bat`**，默认会打包、测试并发布。需要本机已安装 GitHub CLI，并先执行过 `gh auth login`，且账号有本仓库 Release 写权限。
 - **仅发布当前 exe**：执行 `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts\publish-release.ps1`。
 - **手动打包**：`pip install pyinstaller` 后执行 `build_exe.bat`。
 - **测试合并**：双击 `run_quick_test.bat`，或手动：  

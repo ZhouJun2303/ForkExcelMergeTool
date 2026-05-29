@@ -3,11 +3,13 @@ setlocal enabledelayedexpansion
 chcp 65001 >nul
 cd /d "%~dp0"
 
-REM 参数：--gui 无控制台窗口，--test 打包后跑测试，--dist 仅打包不跑测试（未传则默认跑测试），--release 打包成功后发布 GitHub Release
+REM Options: --gui for windowed exe, --test to run tests, --dist/no-test/skip to skip tests.
+REM --release also publishes a GitHub Release after a successful package.
 set "WINMODE=--console"
 set "RUN_TEST=1"
 set "PUBLISH_RELEASE=0"
 set "TEST_FAILED=0"
+
 :parse
 if "%~1"=="" goto done_parse
 if /i "%~1"=="--gui" set "WINMODE=--windowed"
@@ -21,71 +23,71 @@ shift
 goto parse
 :done_parse
 
-echo ========== Fork Excel Merge Tool 一键打包 ==========
+echo ========== Fork Excel Merge Tool Package ==========
 echo.
 
-echo [1/4] 检查依赖...
+echo [1/4] Checking dependencies...
 pip install openpyxl pyinstaller -q
 if %ERRORLEVEL% neq 0 (
-    echo ERROR: pip 安装依赖失败
+    echo ERROR: pip install failed
     pause
     exit /b 1
 )
-echo 依赖 OK
+echo Dependencies OK
 echo.
 
-echo [2/4] 小版本号递增并打包 ( %WINMODE% )...
+echo [2/4] Bump minor version and build ( %WINMODE% )...
 python Scripts\bump_version.py
 pyinstaller --onefile %WINMODE% --name ExcelMergeFork --clean Scripts\MergeExcelFork.py
 if %ERRORLEVEL% neq 0 (
-    echo ERROR: PyInstaller 打包失败
+    echo ERROR: PyInstaller build failed
     pause
     exit /b 1
 )
 echo.
 
-echo [3/4] 复制 exe...
+echo [3/4] Copy exe...
 if not exist dist\ExcelMergeFork.exe (
-    echo ERROR: dist\ExcelMergeFork.exe 未生成
+    echo ERROR: dist\ExcelMergeFork.exe was not generated
     pause
     exit /b 1
 )
 copy /Y dist\ExcelMergeFork.exe ExcelMergeFork.exe >nul
-echo 已生成 ExcelMergeFork.exe
+echo Generated ExcelMergeFork.exe
 echo.
 
 if "%RUN_TEST%"=="1" (
-    echo [4/4] 快速验证（模式合并测试）...
+    echo [4/4] Running merge mode tests...
     if not exist TestData\mode_a_local.xlsx (
         python TestData\gen_merge_mode_tests.py
     )
     python TestData\run_merge_mode_tests.py
     if !ERRORLEVEL! equ 0 (
-        echo 模式合并测试通过
+        echo Merge mode tests passed
     ) else (
-        echo WARNING: 模式合并测试失败，请检查
+        echo WARNING: merge mode tests failed
         set "TEST_FAILED=1"
     )
 ) else (
-    echo [4/4] 已跳过测试（传参 --dist / no-test / 0 / skip 时跳过）
+    echo [4/4] Tests skipped
 )
 
 echo.
-echo ========== 打包完成 ==========
-echo 产物: %CD%\ExcelMergeFork.exe
-echo 参数说明: --gui 无控制台窗口  --test 打包后跑测试  --dist 仅打包不跑测试  --release 发布 GitHub Release
+echo ========== Package Complete ==========
+echo Artifact: %CD%\ExcelMergeFork.exe
+echo Options: --gui windowed exe  --test run tests  --dist skip tests  --release publish GitHub Release
 echo.
 
 if "%PUBLISH_RELEASE%"=="1" (
     if "%TEST_FAILED%"=="1" (
-        echo ERROR: 测试失败，已停止发布 GitHub Release
+        echo ERROR: tests failed; GitHub Release was not published
         pause
         exit /b 1
     )
-    echo [Release] 正在发布 GitHub Release...
+    echo [Release] Publishing GitHub Release...
     powershell -NoProfile -ExecutionPolicy Bypass -File "%CD%\Scripts\publish-release.ps1"
     if !ERRORLEVEL! neq 0 (
-        echo ERROR: GitHub Release 发布失败
+        echo ERROR: GitHub Release publish failed
         pause
         exit /b 1
     )

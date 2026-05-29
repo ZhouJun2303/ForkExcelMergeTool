@@ -52,7 +52,7 @@ $exe = Join-Path $root "ExcelMergeFork.exe"
 $shaFile = Join-Path $root "ExcelMergeFork.exe.sha256"
 
 if (-not (Test-Path -LiteralPath $exe)) {
-    throw "未找到产物: $exe。请先运行 .\一键打包.bat 或使用 -Build。"
+    throw "未找到产物: $exe。请先运行 .\package.bat 或使用 -Build。"
 }
 
 $sha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()

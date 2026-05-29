@@ -21,7 +21,7 @@ python MergeExcelFork.py <fileA> <fileB>
 
 **Build exe:**
 ```bash
-build_exe.bat  # or 一键打包.bat for full pipeline
+build_exe.bat  # or package.bat for full pipeline
 ```
 
 **Run tests:**
