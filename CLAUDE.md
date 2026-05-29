@@ -39,13 +39,14 @@ run_merge_mode_tests.bat
 ### Core Modules (Scripts/)
 | Module | Responsibility |
 |--------|----------------|
-| `config.py` | Global constants: log file, backup dir, compare suffix, sheet skip prefix |
+| `config.py` | Global constants: log file, default backup dir name, compare suffix, sheet skip prefix |
 | `log_util.py` | Logging to file, lock management for single-instance GUI |
+| `backup_util.py` | Merge backup helpers: persisted root dir, project/timestamp path layout, file copies |
 | `excel_io.py` | Excel read/write abstraction: row loading, key normalization, merged cell handling, row equality |
 | `conflict.py` | Conflict detection: compares LOCAL/BASE/REMOTE, returns conflicts and sheet data |
 | `merge_core.py` | Three-way merge logic with 5 modes (A-E) and options-driven pipeline |
 | `compare_core.py` | Two-way comparison: computes diffs, generates contrast Excel |
-| `git_util.py` | Git operations: `git add`, cleanup temp files, remove backup files from index |
+| `git_util.py` | Git operations: `git add`, cleanup temp files, compatibility cleanup for old flat backup files |
 | `merge_gui.py` | Merge window: conflict list, option checkboxes, generate merged result |
 | `diff_gui.py` | Compare window: diff list, generate and open contrast Excel |
 | `gui_common.py` | Shared GUI utilities: status bar logging, color legends, file opening |
@@ -67,6 +68,7 @@ Options (persisted to `merge_options.json`):
 - **E**: Add new sheets
 - **F**: Delete sheets
 - **G**: Resolve conflicts
+- **backup_root_dir**: Optional custom backup root. Backups are written as `root/project/timestamp/*_{local|remote|merged}.xlsx`; empty uses `MERGED` directory + `MergeExcelBackup`.
 
 ### Key Conventions
 - **First column as Key**: Each sheet's first column is the unique row identifier
@@ -78,7 +80,7 @@ Options (persisted to `merge_options.json`):
   - Red (#FFCCCC): Conflicts (LOCAL ≠ REMOTE, both differ from BASE)
 
 ### Data Flow
-1. **Merge**: `MergeExcelFork.py` → `merge_gui.py` (GUI) or `merge_core.py` (CLI) → `conflict.py` for detection → `excel_io.py` for read/write → `git_util.py` for cleanup
+1. **Merge**: `MergeExcelFork.py` → `merge_gui.py` (GUI) or `merge_core.py` (CLI) → `conflict.py` for detection → `excel_io.py` for read/write → `backup_util.py` for backups → `git_util.py` for cleanup
 2. **Compare**: `MergeExcelFork.py` → `diff_gui.py` (GUI) or `compare_core.py` (CLI) → `excel_io.py` → writes `{filename}_compare.xlsx`
 
 ### Exit Codes

@@ -77,19 +77,27 @@ Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Too
 ### 4.3 生成结果并确认
 
 1. 选完所有冲突后，点击「**生成合并结果**」。
-2. 用「**打开合并文件**」检查合并后的 Excel 是否正确。
+2. 用「**打开合并文件**」检查合并后的 Excel 是否正确；需要额外留档时可点「**手动保存备份**」。
 3. 确认无误后，点击「**确认无误并解决冲突**」—— 工具会帮你在 Git 里标记冲突已解决（如 `git add` 等），Fork 会使用合并后的文件。
 4. 若不想保留本次合并，点「**取消**」即可。
 
 ### 4.4 备份文件在哪
 
-合并完成后，会在 **MERGED 文件所在目录**下生成备份（例如仓库里的 `MergeExcelBackup` 或同目录）：
+合并窗口可以在「备份根目录」里自定义保存位置；点「选择目录」后会保存到本地配置。合并完成后会自动备份，也可以点「手动保存备份」再保存一份。
+
+备份目录结构为：
+
+```text
+备份根目录\项目名\时间戳\
+```
+
+若未设置备份根目录，默认使用 **MERGED 文件所在目录**下的 `MergeExcelBackup`。每次备份目录里包含：
 
 - `{合并文件名}_local.xlsx`：本地版本
 - `{合并文件名}_remote.xlsx`：线上版本  
 - `{合并文件名}_merged.xlsx`：本次合并结果
 
-方便以后对照或回退。
+「打开备份目录」会打开本次备份所在目录；若还没生成结果，则打开当前项目的备份目录。
 
 ---
 
@@ -199,12 +207,13 @@ python Scripts\MergeExcelFork.py <文件A> <文件B>
 |------|------|
 | **MergeExcelFork.py**（根目录） | 启动器：将 Scripts 加入路径后调用 Scripts.MergeExcelFork.main() |
 | **Scripts/MergeExcelFork.py** | 入口：解析参数，启动合并/对比 GUI 或回退命令行 |
-| **Scripts/config.py** | 全局常量：日志文件名、备份目录、对比后缀、Sheet 跳过前缀 |
+| **Scripts/config.py** | 全局常量：日志文件名、默认备份目录名、对比后缀、Sheet 跳过前缀 |
 | **Scripts/log_util.py** | 日志：写日志到文件、解析日志路径 |
+| **Scripts/backup_util.py** | 合并备份：读取备份根目录配置，按项目/时间创建备份目录 |
 | **Scripts/excel_io.py** | Excel 读写与行/Key 抽象：加载 Sheet、合并格取值、Key 规范化、行相等判断 |
 | **Scripts/merge_core.py** | 三向合并核心：无 GUI 时的合并与备份（命令行回退用） |
 | **Scripts/compare_core.py** | 二向对比核心：计算差异、生成对比 Excel |
-| **Scripts/git_util.py** | Git 操作：冲突解决后 git add、清理临时文件与备份、获取提交信息 |
+| **Scripts/git_util.py** | Git 操作：冲突解决后 git add、清理临时文件、兼容清理旧版扁平备份、获取提交信息 |
 | **Scripts/conflict.py** | 冲突检测：三份 Excel 比较得到冲突项与每 Sheet 数据（供合并 GUI） |
 | **Scripts/gui_common.py** | GUI 公共：日志到状态栏、颜色图例、打开文件、统一样式 |
 | **Scripts/merge_gui.py** | 合并窗口：冲突列表、生成合并结果（以本地为底）、确认并解决冲突 |

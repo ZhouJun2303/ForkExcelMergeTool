@@ -14,7 +14,7 @@ import openpyxl
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
-from config import BACKUP_SUBDIR
+from backup_util import create_merge_backup
 from excel_io import (
     cell_str,
     get_merged_cell_value,
@@ -795,16 +795,18 @@ def _do_merge_by_options(path_local, path_base, path_remote, path_merged, option
 # 统一入口与备份
 # ---------------------------------------------------------------------------
 
-def do_merge(path_local, path_base, path_remote, path_merged, mode="E", base_side="local", d_choices=None, options=None):
+def do_merge(path_local, path_base, path_remote, path_merged, mode="E", base_side="local", d_choices=None, options=None, backup_root=None):
     """
-    执行合并并写入 MERGED，可选备份到 BACKUP_SUBDIR。
+    执行合并并写入 MERGED，并备份到 指定根目录/项目/时间。
     options: 若提供则为多选集合 {"A","B","C","D","E","F","G"}，此时忽略 mode。
     A=行不变 B=列不变 C=删除行 D=删除列 E=新增Sheet F=删除Sheet G=冲突。
     mode: 未提供 options 时生效，"A"|"B"|"C"|"D"|"E"。
     base_side: "local"|"remote"
     d_choices: G 或冲突时需要；list of {"sheet", "key", "choice", "kind"}。
-    返回 0 成功，2 异常。
+    backup_root: 可选备份根目录；未提供时读取本地配置，仍未设置则使用 MERGED 同目录下 MergeExcelBackup。
+    返回 0 成功，2 异常；成功后 do_merge.last_backup_info 保存本次备份信息。
     """
+    do_merge.last_backup_info = None
     path_base_side = path_local if base_side == "local" else path_remote
     path_other_side = path_remote if base_side == "local" else path_local
     try:
@@ -830,13 +832,17 @@ def do_merge(path_local, path_base, path_remote, path_merged, mode="E", base_sid
         print("ERROR: " + str(e), file=sys.stderr)
         return 2
 
-    merged_dir = os.path.dirname(os.path.abspath(path_merged))
-    base_name = os.path.splitext(os.path.basename(path_merged))[0]
-    backup_dir = os.path.join(merged_dir, BACKUP_SUBDIR)
-    os.makedirs(backup_dir, exist_ok=True)
-    shutil.copy2(path_local, os.path.join(backup_dir, base_name + "_local.xlsx"))
-    shutil.copy2(path_remote, os.path.join(backup_dir, base_name + "_remote.xlsx"))
-    shutil.copy2(path_merged, os.path.join(backup_dir, base_name + "_merged.xlsx"))
+    try:
+        backup_info = create_merge_backup(path_local, path_remote, path_merged, backup_root=backup_root)
+        do_merge.last_backup_info = backup_info
+        backup_dir = backup_info["dir"]
+    except Exception as e:
+        log("备份异常: %s" % e, is_error=True)
+        print("ERROR: 备份失败。" + str(e), file=sys.stderr)
+        return 2
     log("合并完成 MERGED=%s 备份=%s" % (path_merged, backup_dir))
     print("OK: 合并完成。MERGED=%s 备份=%s" % (path_merged, backup_dir), file=sys.stdout)
     return 0
+
+
+do_merge.last_backup_info = None

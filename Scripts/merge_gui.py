@@ -9,12 +9,17 @@ import os
 import re
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 import openpyxl
 
 from config import MAX_TREEVIEW_ROWS
-from config import BACKUP_SUBDIR
+from backup_util import (
+    backup_project_parent,
+    create_merge_backup,
+    load_saved_backup_root,
+    save_backup_root,
+)
 from conflict import compute_conflicts_d
 from excel_io import (
     cell_str,
@@ -34,6 +39,7 @@ from gui_common import (
     gui_log,
     make_color_legend,
     open_excel_file,
+    open_containing_folder,
     setup_merge_styles,
 )
 from git_util import get_git_merge_info, stage_merged_and_cleanup
@@ -45,13 +51,37 @@ from merge_core import do_merge
 DEFAULT_OPTIONS = {"A": True, "B": True, "C": False, "D": False, "E": True, "F": False, "G": True}
 
 
-def _load_merge_options():
-    """从本地文件加载合并选项，不存在或异常则返回默认。"""
+def _load_options_data():
     try:
         path = merge_options_path()
         if path and os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+def _save_options_data(data):
+    try:
+        path = merge_options_path()
+        if path:
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _load_merge_options():
+    """从本地文件加载合并选项，不存在或异常则返回默认。"""
+    try:
+        data = _load_options_data()
+        if data:
             return {k: bool(data.get(k, DEFAULT_OPTIONS.get(k, False))) for k in "ABCDEFG"}
     except Exception:
         pass
@@ -59,12 +89,12 @@ def _load_merge_options():
 
 
 def _save_merge_options(opts):
-    """将合并选项写入本地文件。"""
+    """将合并选项写入本地文件，并保留其它偏好配置。"""
     try:
-        path = merge_options_path()
-        if path:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(opts, f, ensure_ascii=False, indent=2)
+        data = _load_options_data()
+        for k in "ABCDEFG":
+            data[k] = bool(opts.get(k, DEFAULT_OPTIONS.get(k, False)))
+        _save_options_data(data)
     except Exception:
         pass
 
@@ -72,10 +102,8 @@ def _save_merge_options(opts):
 def _load_auto_open_merged():
     """从 merge_options.json 读取「合并后自动打开」是否勾选，默认 True。"""
     try:
-        path = merge_options_path()
-        if path and os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+        data = _load_options_data()
+        if data:
             return bool(data.get("auto_open_merged", True))
     except Exception:
         pass
@@ -85,16 +113,9 @@ def _load_auto_open_merged():
 def _save_auto_open_merged(value):
     """将「合并后自动打开」写入本地，与 merge_options.json 合并。"""
     try:
-        path = merge_options_path()
-        if not path:
-            return
-        data = {}
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+        data = _load_options_data()
         data["auto_open_merged"] = bool(value)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        _save_options_data(data)
     except Exception:
         pass
 
@@ -135,10 +156,13 @@ class MergeWindow:
         self.path_remote = path_remote
         self.path_merged = path_merged
         self._merged_file_path = None
+        self._backup_info = None
+        self._backup_dir_path = None
         self._backup_merged_path = None
         self.merge_done = False
         self.base_side_var = None
         self.status_var = None
+        self.backup_root_var = None
         self.tree = None
         self.option_vars = {}
         self.conflict_vars = []
@@ -178,12 +202,18 @@ class MergeWindow:
         ).pack(side=tk.LEFT, padx=(0, 12))
         self.btn_open_merged = ttk.Button(btn_row, text="打开合并结果", command=self._on_open_merged)
         self.btn_open_merged.pack(side=tk.LEFT, padx=8)
-        self.btn_open_backup_merged = ttk.Button(btn_row, text="打开备份的合并文件", command=self._on_open_backup_merged)
-        self.btn_open_backup_merged.pack(side=tk.LEFT, padx=8)
         self.btn_confirm = ttk.Button(btn_row, text="确认无误并解决冲突", command=self._on_confirm_done)
         self.btn_confirm.pack(side=tk.LEFT, padx=8)
         self.btn_confirm.config(state=tk.DISABLED)
         ttk.Button(btn_row, text="取消", command=self._on_cancel).pack(side=tk.LEFT)
+        backup_btn_row = ttk.Frame(bottom_bar)
+        backup_btn_row.pack(fill=tk.X, pady=(6, 0))
+        self.btn_open_backup_merged = ttk.Button(backup_btn_row, text="打开备份文件", command=self._on_open_backup_merged)
+        self.btn_open_backup_merged.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_manual_backup = ttk.Button(backup_btn_row, text="手动保存备份", command=self._on_manual_save_backup)
+        self.btn_manual_backup.pack(side=tk.LEFT, padx=8)
+        self.btn_open_backup_dir = ttk.Button(backup_btn_row, text="打开备份目录", command=self._on_open_backup_dir)
+        self.btn_open_backup_dir.pack(side=tk.LEFT, padx=8)
 
         center = ttk.Frame(self.root)
         center.pack(fill=tk.BOTH, expand=True, padx=pad, pady=(0, pad))
@@ -215,6 +245,22 @@ class MergeWindow:
         base_cb.bind("<<ComboboxSelected>>", lambda e: self._on_options_or_base_changed())
         hint_opts = ttk.Label(top, text="提示：不勾选A则插入线上新增行，不勾选B则插入线上新增列。勾选C/D则删除本地独有的行/列。勾选G则显示所有冲突项供选择。", font=("Segoe UI", 8), foreground="gray")
         hint_opts.pack(anchor=tk.W, pady=(2, 0))
+
+        backup_row = ttk.Frame(top)
+        backup_row.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(backup_row, text="备份根目录：").pack(side=tk.LEFT, padx=(0, 4))
+        self.backup_root_var = tk.StringVar(self.root, value=load_saved_backup_root())
+        backup_entry = ttk.Entry(backup_row, textvariable=self.backup_root_var)
+        backup_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        ttk.Button(backup_row, text="选择目录", command=self._on_choose_backup_root).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(backup_row, text="保存设置", command=self._on_save_backup_root).pack(side=tk.LEFT)
+        hint_backup = ttk.Label(
+            top,
+            text="备份会保存到：备份根目录 / 项目名 / 时间戳 / 文件；留空则使用合并文件同目录的 MergeExcelBackup。",
+            font=("Segoe UI", 8),
+            foreground="gray",
+        )
+        hint_backup.pack(anchor=tk.W, pady=(2, 0))
 
         info_frame = ttk.LabelFrame(center, text="版本说明", padding=pad)
         info_frame.pack(fill=tk.X, pady=(0, 6))
@@ -525,6 +571,35 @@ class MergeWindow:
         else:
             messagebox.showwarning("提示", "文件不存在或无法打开")
 
+    def _current_backup_root(self):
+        return (self.backup_root_var.get() if self.backup_root_var is not None else "").strip()
+
+    def _on_choose_backup_root(self):
+        initial_dir = self._current_backup_root()
+        if not initial_dir or not os.path.isdir(initial_dir):
+            initial_dir = os.path.dirname(os.path.abspath(self.path_merged)) or os.getcwd()
+        folder = filedialog.askdirectory(
+            parent=self.root,
+            title="选择备份根目录",
+            initialdir=initial_dir,
+        )
+        if folder:
+            self.backup_root_var.set(os.path.normpath(folder))
+            self._on_save_backup_root(show_message=False)
+
+    def _on_save_backup_root(self, show_message=True):
+        root_dir = self._current_backup_root()
+        try:
+            save_backup_root(root_dir)
+            target = backup_project_parent(self.path_merged, root_dir)
+            msg = "备份目录设置已保存：%s" % target
+            gui_log(msg, self.status_var)
+            if show_message:
+                messagebox.showinfo("已保存", msg)
+        except Exception as e:
+            gui_log("保存备份目录设置失败: %s" % e, self.status_var, is_error=True)
+            messagebox.showerror("错误", "保存备份目录设置失败：%s" % e)
+
     def _on_open_merged(self):
         if not self.merge_done:
             messagebox.showwarning("提示", "请先点击「生成合并结果」")
@@ -550,6 +625,49 @@ class MergeWindow:
             gui_log("已打开备份的合并文件：%s" % path, self.status_var)
         else:
             messagebox.showwarning("提示", "无法打开备份文件")
+
+    def _set_backup_info(self, backup_info):
+        self._backup_info = backup_info or None
+        self._backup_dir_path = (backup_info or {}).get("dir")
+        self._backup_merged_path = (backup_info or {}).get("merged")
+
+    def _on_manual_save_backup(self):
+        if not self.merge_done:
+            messagebox.showwarning("提示", "请先点击「生成合并结果」")
+            return
+        merged_path = self._merged_file_path or os.path.normpath(os.path.abspath(self.path_merged))
+        if not os.path.isfile(merged_path):
+            messagebox.showwarning("提示", "合并文件不存在：%s" % merged_path)
+            return
+        try:
+            backup_info = create_merge_backup(
+                self.path_local,
+                self.path_remote,
+                merged_path,
+                backup_root=self._current_backup_root(),
+            )
+            self._set_backup_info(backup_info)
+            gui_log("已手动保存备份：%s" % backup_info["dir"], self.status_var)
+            messagebox.showinfo("已保存", "备份已保存到：\n%s" % backup_info["dir"])
+        except Exception as e:
+            gui_log("手动保存备份失败: %s" % e, self.status_var, is_error=True)
+            messagebox.showerror("错误", "手动保存备份失败：%s" % e)
+
+    def _on_open_backup_dir(self):
+        path = self._backup_dir_path
+        if not path:
+            root_dir = self._current_backup_root()
+            path = backup_project_parent(self.path_merged, root_dir)
+        if not os.path.isdir(path):
+            try:
+                os.makedirs(path, exist_ok=True)
+            except Exception:
+                messagebox.showwarning("提示", "备份目录不存在：%s" % path)
+                return
+        if open_containing_folder(path, select_file=False):
+            gui_log("已打开备份目录：%s" % path, self.status_var)
+        else:
+            messagebox.showwarning("提示", "无法打开备份目录")
 
     def _on_generate_merge(self):
         path_out = os.path.normpath(os.path.abspath(self.path_merged))
@@ -577,19 +695,18 @@ class MergeWindow:
                     "kind": "row" if kind == "row" else "column",
                 })
         try:
+            self._on_save_backup_root(show_message=False)
             code = do_merge(
                 self.path_local, self.path_base, self.path_remote, self.path_merged,
                 base_side=base_side, d_choices=d_choices if d_choices else None,
-                options=options,
+                options=options, backup_root=self._current_backup_root(),
             )
             if code != 0:
                 raise RuntimeError("合并返回码 %d" % code)
             self.merge_done = True
             self._merged_file_path = os.path.normpath(os.path.abspath(self.path_merged))
-            merged_dir = os.path.dirname(self._merged_file_path)
-            base_name = os.path.splitext(os.path.basename(self.path_merged))[0]
-            self._backup_merged_path = os.path.join(merged_dir, BACKUP_SUBDIR, base_name + "_merged.xlsx")
-            gui_log("合并结果已生成：%s" % self._merged_file_path, self.status_var)
+            self._set_backup_info(getattr(do_merge, "last_backup_info", None))
+            gui_log("合并结果已生成：%s；备份=%s" % (self._merged_file_path, self._backup_dir_path or ""), self.status_var)
             _save_auto_open_merged(self.auto_open_var.get())
             self.btn_confirm.config(state=tk.NORMAL)
             if self.auto_open_var.get() and os.path.isfile(self._merged_file_path):
@@ -611,6 +728,10 @@ class MergeWindow:
         self.path_base = path_base
         self.path_remote = path_remote
         self.path_merged = path_merged
+        self._merged_file_path = None
+        self._set_backup_info(None)
+        self.merge_done = False
+        self.btn_confirm.config(state=tk.DISABLED)
         self._on_options_or_base_changed()
         self.root.lift()
         self.root.focus_force()
