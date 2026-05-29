@@ -21,23 +21,24 @@ from backup_util import (
     load_saved_backup_root,
     save_backup_root,
 )
-from conflict import compute_conflicts
 from excel_io import (
     cell_str,
-    get_sheet_names,
     get_column_values,
     header_normalize_for_compare,
     key_str_normalized,
     load_sheet_header,
     load_sheet_rows_full,
-    ordered_keys_normalized,
     rows_to_dict,
 )
 from version import __version__ as APP_VERSION
 from gui_common import (
+    ToolTip,
+    UI,
     UpdateButtonController,
     gui_log,
+    make_badge,
     make_color_legend,
+    make_separator,
     open_excel_file,
     open_containing_folder,
     setup_merge_styles,
@@ -45,6 +46,7 @@ from gui_common import (
 from git_util import get_git_merge_info, stage_merged_and_cleanup
 from log_util import merge_options_path, release_merge_lock
 from merge_core import do_merge
+from preview_core import build_merge_preview
 
 
 # 选项默认值（勾选=参与逻辑）
@@ -181,8 +183,8 @@ class MergeWindow:
         self.root = tk.Tk()
         self.root.title("Excel 多模式合并 v%s" % APP_VERSION)
         _merge_instance = self
-        self.root.minsize(820, 760)
-        self.root.geometry("1024x820")
+        self.root.minsize(980, 680)
+        self.root.geometry("1180x760")
         setup_merge_styles(self.root)
 
         self.local_info, self.remote_info = get_git_merge_info(path_merged)
@@ -192,50 +194,111 @@ class MergeWindow:
         self._schedule_preview_refresh()
 
     def _build_ui(self):
-        pad = 12
+        pad = 14
         self.status_var = tk.StringVar(self.root, value="")
         self.auto_open_var = tk.BooleanVar(self.root, value=_load_auto_open_merged())
-        bottom_bar = ttk.Frame(self.root, padding=(pad, 10))
+
+        bottom_bar = ttk.Frame(self.root, padding=(pad, 10), style="BottomBar.TFrame")
         bottom_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-        center = ttk.Frame(self.root)
-        center.pack(fill=tk.BOTH, expand=True, padx=pad, pady=(pad, 0))
+        shell = ttk.Frame(self.root, style="App.TFrame")
+        shell.pack(fill=tk.BOTH, expand=True, padx=pad, pady=(pad, 0))
 
-        title_row = ttk.Frame(center)
+        title_row = ttk.Frame(shell, style="App.TFrame")
         title_row.pack(fill=tk.X)
-        ttk.Label(title_row, text="Excel 三向合并", font=("Segoe UI", 13, "bold")).pack(side=tk.LEFT)
-        tk.Label(
-            title_row, text="v%s" % APP_VERSION, font=("Segoe UI", 9, "bold"),
-            fg="#1877f2", bg="#f0f2f5",
-        ).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(title_row, text="Excel 三向合并", style="Title.TLabel").pack(side=tk.LEFT)
+        make_badge(title_row, "v%s" % APP_VERSION, "primary").pack(side=tk.LEFT, padx=(10, 0))
+        self.btn_update = ttk.Button(title_row, text="更新", width=6, style="Tiny.TButton")
+        self.btn_update.pack(side=tk.LEFT, padx=(6, 0))
+        ToolTip(self.btn_update, "检查新版本")
         self.preview_status_var = tk.StringVar(self.root, value="")
-        ttk.Label(title_row, textvariable=self.preview_status_var, font=("Segoe UI", 9)).pack(side=tk.RIGHT)
+        ttk.Label(title_row, textvariable=self.preview_status_var, style="TLabel").pack(side=tk.RIGHT)
 
-        target_frame = ttk.LabelFrame(center, text="目标文件", padding=(10, 8))
-        target_frame.pack(fill=tk.X, pady=(8, 6))
+        target_frame = ttk.Frame(shell, padding=(12, 9), style="Panel.TFrame")
+        target_frame.pack(fill=tk.X, pady=(10, 10))
         self.target_path_var = tk.StringVar(self.root, value=self._short_path(self.path_merged, 112))
-        ttk.Label(target_frame, textvariable=self.target_path_var, font=("Segoe UI", 8)).pack(anchor=tk.W)
+        ttk.Label(target_frame, text="目标文件", style="Section.TLabel").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(target_frame, textvariable=self.target_path_var, style="Panel.TLabel").pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        rules_frame = ttk.LabelFrame(center, text="合并规则", padding=(10, 8))
-        rules_frame.pack(fill=tk.X, pady=(0, 6))
-        base_row = ttk.Frame(rules_frame)
-        base_row.pack(fill=tk.X)
-        ttk.Label(base_row, text="以哪一侧为底：").pack(side=tk.LEFT, padx=(0, 6))
+        body = ttk.PanedWindow(shell, orient=tk.HORIZONTAL)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        left_outer = ttk.Frame(body, style="Panel.TFrame")
+        right_panel = ttk.Frame(body, padding=(12, 12), style="Panel.TFrame")
+        body.add(left_outer, weight=0)
+        body.add(right_panel, weight=1)
+
+        left_canvas = tk.Canvas(left_outer, width=282, bg=UI["panel"], highlightthickness=0, borderwidth=0)
+        left_scroll = ttk.Scrollbar(left_outer, orient=tk.VERTICAL, command=left_canvas.yview)
+        left_panel = ttk.Frame(left_canvas, padding=(12, 12), style="Panel.TFrame")
+        left_window = left_canvas.create_window((0, 0), window=left_panel, anchor=tk.NW)
+        left_canvas.configure(yscrollcommand=left_scroll.set)
+        left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        left_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def _sync_left_scroll(_event=None):
+            left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+            left_canvas.itemconfigure(left_window, width=left_canvas.winfo_width())
+
+        def _left_scrollable():
+            bbox = left_canvas.bbox("all")
+            return bool(bbox and bbox[3] > left_canvas.winfo_height())
+
+        def _pointer_over_left_canvas(event):
+            try:
+                x_root = getattr(event, "x_root", None)
+                y_root = getattr(event, "y_root", None)
+                if x_root is None or y_root is None:
+                    x_root = self.root.winfo_pointerx()
+                    y_root = self.root.winfo_pointery()
+                left = left_canvas.winfo_rootx()
+                top = left_canvas.winfo_rooty()
+                return (
+                    left <= x_root < left + left_canvas.winfo_width()
+                    and top <= y_root < top + left_canvas.winfo_height()
+                )
+            except tk.TclError:
+                return False
+
+        def _on_left_mousewheel(event):
+            if not _pointer_over_left_canvas(event) or not _left_scrollable():
+                return None
+            if getattr(event, "num", None) == 4:
+                units = -3
+            elif getattr(event, "num", None) == 5:
+                units = 3
+            else:
+                delta = getattr(event, "delta", 0)
+                units = -int(delta / 120) if delta else 0
+                if units == 0 and delta:
+                    units = -1 if delta > 0 else 1
+            if units:
+                left_canvas.yview_scroll(units, "units")
+                return "break"
+            return None
+
+        left_panel.bind("<Configure>", _sync_left_scroll)
+        left_canvas.bind("<Configure>", _sync_left_scroll)
+        self.root.bind_all("<MouseWheel>", _on_left_mousewheel, add="+")
+        self.root.bind_all("<Button-4>", _on_left_mousewheel, add="+")
+        self.root.bind_all("<Button-5>", _on_left_mousewheel, add="+")
+
+        rules_frame = ttk.Frame(left_panel, style="Panel.TFrame")
+        rules_frame.pack(fill=tk.X)
+        ttk.Label(rules_frame, text="合并规则", style="Section.TLabel").pack(anchor=tk.W)
+        base_row = ttk.Frame(rules_frame, style="Panel.TFrame")
+        base_row.pack(fill=tk.X, pady=(10, 0))
+        ttk.Label(base_row, text="基准侧", style="Panel.TLabel").pack(side=tk.LEFT, padx=(0, 8))
         self.base_side_var = tk.StringVar(self.root, value="local")
         base_cb = ttk.Combobox(base_row, textvariable=self.base_side_var, state="readonly", width=16)
         base_cb["values"] = [b[1] for b in self.BASE_SIDES]
         base_cb.current(0)
-        base_cb.pack(side=tk.LEFT)
+        base_cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
         base_cb.bind("<<ComboboxSelected>>", lambda e: self._schedule_preview_refresh())
-        ttk.Label(
-            base_row,
-            text="基准侧决定默认保留的行、列、格式；切换后会重新计算预览。",
-            font=("Segoe UI", 8),
-            foreground="gray",
-        ).pack(side=tk.LEFT, padx=(12, 0))
+        ToolTip(base_cb, "基准侧决定默认保留的行、列和格式；切换后自动刷新预览。")
 
-        opts_row = ttk.Frame(rules_frame)
-        opts_row.pack(fill=tk.X, pady=(8, 0))
+        opts_row = ttk.Frame(rules_frame, style="Panel.TFrame")
+        opts_row.pack(fill=tk.X, pady=(10, 0))
         loaded = _load_merge_options()
         self.option_vars = {}
         for key, label in self.OPTIONS:
@@ -244,86 +307,100 @@ class MergeWindow:
             cb = ttk.Checkbutton(
                 opts_row, text="%s %s" % (key, label), variable=var, command=self._on_option_click,
             )
-            cb.pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Label(
-            rules_frame,
-            text="A/B 勾选表示保留基准侧结构；取消 A/B 会从另一侧补新增行/列。C/D/F 勾选才会执行删除。G 勾选后冲突需选择保留哪侧。",
-            font=("Segoe UI", 8),
-            foreground="gray",
-        ).pack(anchor=tk.W, pady=(4, 0))
+            cb.pack(anchor=tk.W, pady=1)
+        ToolTip(opts_row, "A/B 控制是否保留基准结构；C/D/F 控制删除；G 控制冲突选择。")
 
-        backup_row = ttk.Frame(rules_frame)
-        backup_row.pack(fill=tk.X, pady=(8, 0))
-        ttk.Label(backup_row, text="备份根目录：").pack(side=tk.LEFT, padx=(0, 4))
+        backup_frame = ttk.Frame(left_panel, style="Panel.TFrame")
         self.backup_root_var = tk.StringVar(self.root, value=load_saved_backup_root())
+
+        make_separator(left_panel).pack(fill=tk.X, pady=12)
+
+        info_frame = ttk.Frame(left_panel, padding=(8, 8), style="Card.TFrame")
+        info_frame.pack(fill=tk.X)
+        ttk.Label(info_frame, text="版本来源", style="CardSection.TLabel").pack(anchor=tk.W)
+        left_box = ttk.Frame(info_frame, padding=(0, 6), style="Card.TFrame")
+        left_box.pack(fill=tk.X, pady=(6, 4))
+        make_badge(left_box, "本地 Local", "neutral").pack(anchor=tk.W)
+        self._fill_commit_info(left_box, self.local_info)
+        ttk.Button(left_box, text="打开本地 Excel", command=lambda: self._open_local(), style="Tiny.TButton").pack(anchor=tk.W, pady=(4, 0))
+        make_separator(info_frame).pack(fill=tk.X, pady=(0, 4))
+        right_box = ttk.Frame(info_frame, padding=(0, 6), style="Card.TFrame")
+        right_box.pack(fill=tk.X)
+        make_badge(right_box, "线上 Remote", "neutral").pack(anchor=tk.W)
+        self._fill_commit_info(right_box, self.remote_info)
+        ttk.Button(right_box, text="打开线上 Excel", command=lambda: self._open_remote(), style="Tiny.TButton").pack(anchor=tk.W, pady=(4, 0))
+
+        make_separator(left_panel).pack(fill=tk.X, pady=12)
+
+        backup_frame.pack(fill=tk.X)
+        ttk.Label(backup_frame, text="备份", style="Section.TLabel").pack(anchor=tk.W)
+        backup_row = ttk.Frame(backup_frame, style="Panel.TFrame")
+        backup_row.pack(fill=tk.X, pady=(8, 0))
         backup_entry = ttk.Entry(backup_row, textvariable=self.backup_root_var)
         backup_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
-        ttk.Button(backup_row, text="选择目录", command=self._on_choose_backup_root).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(backup_row, text="保存设置", command=self._on_save_backup_root).pack(side=tk.LEFT)
+        btn_backup_pick = ttk.Button(backup_row, text="选择", command=self._on_choose_backup_root, style="Secondary.TButton")
+        btn_backup_pick.pack(side=tk.LEFT)
+        ttk.Button(backup_frame, text="保存备份设置", command=self._on_save_backup_root, style="Secondary.TButton").pack(anchor=tk.W, pady=(6, 0))
+        ToolTip(backup_entry, "留空时使用合并文件同目录下的 MergeExcelBackup。")
 
-        info_frame = ttk.LabelFrame(center, text="版本来源", padding=(10, 8))
-        info_frame.pack(fill=tk.X, pady=(0, 6))
-        row1 = ttk.Frame(info_frame)
-        row1.pack(fill=tk.X)
-        left_box = ttk.LabelFrame(row1, text="本地 (Local)", padding=8)
-        left_box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
-        self._fill_commit_info(left_box, self.local_info)
-        ttk.Button(left_box, text="打开本地 Excel", command=lambda: self._open_local()).pack(anchor=tk.W, pady=(6, 0))
-        right_box = ttk.LabelFrame(row1, text="线上 (Remote)", padding=8)
-        right_box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
-        self._fill_commit_info(right_box, self.remote_info)
-        ttk.Button(right_box, text="打开线上 Excel", command=lambda: self._open_remote()).pack(anchor=tk.W, pady=(6, 0))
-
-        preview_frame = ttk.LabelFrame(center, text="差异预览", padding=(10, 8))
-        preview_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
-        preview_top = ttk.Frame(preview_frame)
+        preview_top = ttk.Frame(right_panel, style="Panel.TFrame")
         preview_top.pack(fill=tk.X)
+        ttk.Label(preview_top, text="差异预览", style="Section.TLabel").pack(side=tk.LEFT)
         self.summary_var = tk.StringVar(self.root, value="")
-        self.hint_label = ttk.Label(preview_top, textvariable=self.summary_var, font=("Segoe UI", 9))
-        self.hint_label.pack(side=tk.LEFT, anchor=tk.W)
+        self.hint_label = ttk.Label(preview_top, textvariable=self.summary_var, style="Muted.TLabel")
+        self.hint_label.pack(side=tk.LEFT, anchor=tk.W, padx=(12, 0))
         legend_merge = make_color_legend(preview_top, [
-            ("#008000", "绿色=新增"),
-            ("#FF6600", "橙色=删除冲突"),
-            ("#CC0000", "红色=修改冲突"),
-            ("#808080", "灰色=将删除"),
+            (UI["success_bg"], "新增"),
+            (UI["warning_bg"], "删除冲突"),
+            (UI["danger_bg"], "修改冲突"),
+            (UI["deleted_bg"], "将删除"),
         ])
         legend_merge.pack(side=tk.RIGHT)
 
-        self.content_frame = ttk.Frame(preview_frame)
-        self.content_frame.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
-        table_frame = ttk.Frame(self.content_frame)
+        self.content_frame = ttk.Frame(right_panel, style="Panel.TFrame")
+        self.content_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+        table_frame = ttk.Frame(self.content_frame, style="Panel.TFrame")
         table_frame.pack(fill=tk.BOTH, expand=True)
+        table_frame.grid_rowconfigure(0, weight=1)
+        table_frame.grid_columnconfigure(0, weight=1)
         cols = ("Sheet", "Key / 说明", "处理方式")
         self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=14)
-        for c, w in (("Sheet", 140), ("Key / 说明", 340), ("处理方式", 180)):
+        for c, w, min_w, stretch in (
+            ("Sheet", 150, 110, False),
+            ("Key / 说明", 420, 260, True),
+            ("处理方式", 190, 150, False),
+        ):
             self.tree.heading(c, text=c)
-            self.tree.column(c, width=w, stretch=(c == "Key / 说明"))
-        self.tree.tag_configure("new", foreground="#008000", background="#E8F5E9")
-        self.tree.tag_configure("del", foreground="#808080", background="#F5F5F5")
-        self.tree.tag_configure("del_conflict", foreground="#FF6600", background="#FFF3E0")
-        self.tree.tag_configure("conflict", foreground="#CC0000", background="#FFEBEE")
+            self.tree.column(c, width=w, minwidth=min_w, stretch=stretch)
+        self.tree.tag_configure("new", foreground=UI["success"], background=UI["success_bg"])
+        self.tree.tag_configure("del", foreground=UI["deleted"], background=UI["deleted_bg"])
+        self.tree.tag_configure("del_conflict", foreground=UI["warning"], background=UI["warning_bg"])
+        self.tree.tag_configure("conflict", foreground=UI["danger"], background=UI["danger_bg"])
+        self.tree.configure(cursor="hand2")
         self.tree.bind("<Double-1>", self._on_merge_tree_double_click)
+        self.tree.bind("<Return>", self._on_merge_tree_double_click)
         sb = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
-        page_frame = ttk.Frame(self.content_frame)
-        page_frame.pack(fill=tk.X, pady=(4, 0))
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+        page_frame = ttk.Frame(self.content_frame, style="Panel.TFrame")
+        page_frame.pack(fill=tk.X, pady=(8, 0))
         self.merge_page_var = tk.StringVar(self.root, value="")
-        ttk.Button(page_frame, text="上一页", command=lambda: self._change_merge_page(-1)).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(page_frame, text="下一页", command=lambda: self._change_merge_page(1)).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Label(page_frame, textvariable=self.merge_page_var, font=("Segoe UI", 9)).pack(side=tk.LEFT)
-        sel_frame = ttk.Frame(self.content_frame)
-        sel_frame.pack(fill=tk.X, pady=(4, 0))
-        ttk.Label(sel_frame, text="选中冲突项：").pack(side=tk.LEFT)
-        ttk.Button(sel_frame, text="取本地", command=lambda: self._set_choice("本地")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(sel_frame, text="取线上", command=lambda: self._set_choice("线上")).pack(side=tk.LEFT)
-        ttk.Label(sel_frame, text="双击行可查看完整内容", font=("Segoe UI", 8), foreground="gray").pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Button(page_frame, text="上一页", command=lambda: self._change_merge_page(-1), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(page_frame, text="下一页", command=lambda: self._change_merge_page(1), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(page_frame, textvariable=self.merge_page_var, style="Panel.TLabel").pack(side=tk.LEFT)
+        sel_frame = ttk.Frame(self.content_frame, style="Panel.TFrame")
+        sel_frame.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(sel_frame, text="冲突选择", style="Panel.TLabel").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(sel_frame, text="取本地", command=lambda: self._set_choice("本地"), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(sel_frame, text="取线上", command=lambda: self._set_choice("线上"), style="Secondary.TButton").pack(side=tk.LEFT)
+        ttk.Button(sel_frame, text="查看详情", command=self._show_selected_merge_detail, style="Secondary.TButton").pack(side=tk.RIGHT)
+        ttk.Label(sel_frame, text="双击或回车查看完整内容", style="Muted.TLabel").pack(side=tk.RIGHT, padx=(0, 10))
 
-        status_row = ttk.Frame(bottom_bar)
+        status_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
         status_row.pack(fill=tk.X)
-        ttk.Label(status_row, textvariable=self.status_var, font=("Segoe UI", 9)).pack(side=tk.LEFT, anchor=tk.W)
-        btn_row = ttk.Frame(bottom_bar)
+        ttk.Label(status_row, textvariable=self.status_var, style="Panel.TLabel").pack(side=tk.LEFT, anchor=tk.W)
+        btn_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
         btn_row.pack(fill=tk.X, pady=(8, 0))
         self.btn_merge = ttk.Button(btn_row, text="生成合并结果", command=self._on_generate_merge, style="Accent.TButton")
         self.btn_merge.pack(side=tk.LEFT, padx=(0, 8))
@@ -336,14 +413,12 @@ class MergeWindow:
             btn_row, text="合并后自动打开", variable=self.auto_open_var,
             command=lambda: _save_auto_open_merged(self.auto_open_var.get()),
         ).pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Button(btn_row, text="取消", command=self._on_cancel).pack(side=tk.LEFT)
-        self.btn_update = ttk.Button(btn_row, text="检查更新")
-        self.btn_update.pack(side=tk.RIGHT)
+        ttk.Button(btn_row, text="取消", command=self._on_cancel, style="Secondary.TButton").pack(side=tk.LEFT)
         self.update_controller = UpdateButtonController(
-            self.root, self.btn_update, status_var=self.status_var, on_quit=self._quit_for_update,
+            self.root, self.btn_update, status_var=self.status_var, on_quit=self._quit_for_update, compact=True,
         )
 
-        backup_btn_row = ttk.Frame(bottom_bar)
+        backup_btn_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
         backup_btn_row.pack(fill=tk.X, pady=(6, 0))
         self.btn_open_backup_merged = ttk.Button(backup_btn_row, text="打开备份文件", command=self._on_open_backup_merged)
         self.btn_open_backup_merged.pack(side=tk.LEFT, padx=(0, 8))
@@ -351,16 +426,10 @@ class MergeWindow:
         self.btn_manual_backup.pack(side=tk.LEFT, padx=(0, 8))
         self.btn_open_backup_dir = ttk.Button(backup_btn_row, text="打开备份目录", command=self._on_open_backup_dir)
         self.btn_open_backup_dir.pack(side=tk.LEFT)
-        ttk.Label(
-            backup_btn_row,
-            text="备份路径：根目录 / 项目名 / 时间戳；留空则使用合并文件同目录的 MergeExcelBackup。",
-            font=("Segoe UI", 8),
-            foreground="gray",
-        ).pack(side=tk.LEFT, padx=(12, 0))
 
-        update_progress_row = ttk.Frame(bottom_bar)
+        update_progress_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
         self.update_progress_var = tk.IntVar(self.root, value=0)
-        self.update_progress_label = ttk.Label(update_progress_row, text="", font=("Segoe UI", 8))
+        self.update_progress_label = ttk.Label(update_progress_row, text="", style="Panel.TLabel")
         self.update_progress_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
         self.update_progress_bar = ttk.Progressbar(
             update_progress_row, variable=self.update_progress_var, maximum=100, length=220,
@@ -446,7 +515,9 @@ class MergeWindow:
 
         def worker():
             try:
-                result = self._build_preview_result(options, base_side)
+                result = build_merge_preview(
+                    self.path_local, self.path_base, self.path_remote, options, base_side
+                )
             except Exception as e:
                 result = {"error": e}
             self.root.after(0, lambda: self._finish_preview_refresh(request_id, cache_key, result))
@@ -491,7 +562,9 @@ class MergeWindow:
             self.summary_var.set("；".join(pieces))
         source = "缓存" if from_cache else "计算"
         self._set_preview_busy(False, "预览已更新")
-        gui_log("已%s合并预览，共 %d 条，显示 %d 条" % (source, total, shown), self.status_var)
+        elapsed = result.get("elapsed_ms")
+        elapsed_text = "，耗时 %dms" % elapsed if elapsed is not None else ""
+        gui_log("已%s合并预览，共 %d 条，显示 %d 条%s" % (source, total, shown, elapsed_text), self.status_var)
 
     def _merge_items_with_current_choices(self, items):
         out = []
@@ -515,194 +588,6 @@ class MergeWindow:
                     continue
             out.append(item)
         return out
-
-    def _build_preview_result(self, options, base_side):
-        """后台构建合并预览数据，不直接触碰 Tk 控件。"""
-        options = set(options)
-        path_base = self.path_local if base_side == "local" else self.path_remote
-        path_other = self.path_remote if base_side == "local" else self.path_local
-
-        items_to_insert = []
-        conflict_entries = []
-        summary = {"new": 0, "delete": 0, "conflict": 0, "info": 0}
-
-        row_col_data = self._load_preview_row_col_data(options, path_base, path_other)
-        sheet_data_base = row_col_data["base_data"]
-        sheet_data_other = row_col_data["other_data"]
-        base_sheets = row_col_data["base_sheets"]
-        other_sheets = row_col_data["other_sheets"]
-        other_sheet_set = row_col_data["other_sheet_set"]
-        sheet_names_common = row_col_data["common_sheets"]
-        wb_base_sheetnames = row_col_data["base_sheetnames"]
-
-        if "A" not in options:
-            for sheet_name in sheet_names_common:
-                data_b = sheet_data_base[sheet_name]
-                data_o = sheet_data_other[sheet_name]
-                base_keys = data_b["keys"] - {""}
-                for k in data_o["keys_ordered"]:
-                    if k and k not in base_keys:
-                        items_to_insert.append((sheet_name, k, "将新增行", "new"))
-                        summary["new"] += 1
-
-        if "C" in options:
-            for sheet_name in sheet_names_common:
-                data_b = sheet_data_base[sheet_name]
-                data_o = sheet_data_other[sheet_name]
-                base_keys = data_b["keys"] - {""}
-                other_keys = data_o["keys"] - {""}
-                for k in data_b["keys_ordered"]:
-                    if k and k in base_keys and k not in other_keys:
-                        items_to_insert.append((sheet_name, k, "将删除行", "del"))
-                        summary["delete"] += 1
-
-        if "B" not in options:
-            for sheet_name in sheet_names_common:
-                data_b = sheet_data_base[sheet_name]
-                data_o = sheet_data_other[sheet_name]
-                header_b_norm = set(header_normalize_for_compare(h) for h in data_b["header"] if h)
-                for h in data_o["header"]:
-                    if h and header_normalize_for_compare(h) not in header_b_norm:
-                        items_to_insert.append((sheet_name, h, "将新增列", "new"))
-                        summary["new"] += 1
-
-        if "D" in options:
-            for sheet_name in sheet_names_common:
-                data_b = sheet_data_base[sheet_name]
-                data_o = sheet_data_other[sheet_name]
-                header_o_norm = set(header_normalize_for_compare(h) for h in data_o["header"] if h)
-                seen_headers = set()
-                for h in data_b["header"]:
-                    norm = header_normalize_for_compare(h)
-                    if h and norm not in seen_headers and norm not in header_o_norm:
-                        seen_headers.add(norm)
-                        items_to_insert.append((sheet_name, h, "将删除列", "del"))
-                        summary["delete"] += 1
-
-        if "E" in options:
-            for name in other_sheets:
-                if name not in base_sheets:
-                    items_to_insert.append((name, "新增 Sheet", "将追加", "new"))
-                    summary["new"] += 1
-
-        if "F" in options:
-            for name in wb_base_sheetnames:
-                if name not in other_sheet_set:
-                    items_to_insert.append((name, "删除 Sheet", "将删除", "del"))
-                    summary["delete"] += 1
-
-        if "G" in options:
-            self._append_conflict_preview_items(items_to_insert, conflict_entries, summary)
-
-        return {
-            "items": items_to_insert,
-            "conflict_entries": conflict_entries,
-            "summary": summary,
-            "base_side": base_side,
-            "options": tuple(sorted(options)),
-        }
-
-    def _load_preview_row_col_data(self, options, path_base, path_other):
-        sheet_data_base = {}
-        sheet_data_other = {}
-        need_row_col_data = ("A" not in options) or ("B" not in options) or ("C" in options) or ("D" in options)
-        need_sheet_names = need_row_col_data or ("E" in options) or ("F" in options)
-        if not need_sheet_names:
-            return {
-                "base_data": sheet_data_base,
-                "other_data": sheet_data_other,
-                "base_sheets": set(),
-                "other_sheets": [],
-                "other_sheet_set": set(),
-                "common_sheets": [],
-                "base_sheetnames": [],
-            }
-
-        wb_base = None
-        wb_other = None
-        try:
-            wb_base = openpyxl.load_workbook(path_base, data_only=True, read_only=True)
-            wb_other = openpyxl.load_workbook(path_other, data_only=True, read_only=True)
-            base_sheets = set(get_sheet_names(wb_base))
-            other_sheets = get_sheet_names(wb_other)
-            other_sheet_set = set(other_sheets)
-            sheet_names_common = [n for n in get_sheet_names(wb_base) if n in wb_other.sheetnames]
-            wb_base_sheetnames = list(wb_base.sheetnames)
-
-            if need_row_col_data:
-                for sheet_name in sheet_names_common:
-                    ws_b = wb_base[sheet_name]
-                    ws_o = wb_other[sheet_name]
-                    max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
-                    rows_b, _ = load_sheet_rows_full(ws_b, max_col, use_cache=True)
-                    rows_o, _ = load_sheet_rows_full(ws_o, max_col, use_cache=True)
-                    sheet_data_base[sheet_name] = {
-                        "keys": set(key_str_normalized(r[0]) if r else "" for r in rows_b),
-                        "keys_ordered": ordered_keys_normalized(rows_b),
-                        "header": load_sheet_header(ws_b, max_col),
-                    }
-                    sheet_data_other[sheet_name] = {
-                        "keys": set(key_str_normalized(r[0]) if r else "" for r in rows_o),
-                        "keys_ordered": ordered_keys_normalized(rows_o),
-                        "header": load_sheet_header(ws_o, max_col),
-                    }
-        finally:
-            if wb_base is not None:
-                try:
-                    wb_base.close()
-                except Exception:
-                    pass
-            if wb_other is not None:
-                try:
-                    wb_other.close()
-                except Exception:
-                    pass
-
-        return {
-            "base_data": sheet_data_base,
-            "other_data": sheet_data_other,
-            "base_sheets": base_sheets,
-            "other_sheets": other_sheets,
-            "other_sheet_set": other_sheet_set,
-            "common_sheets": sheet_names_common,
-            "base_sheetnames": wb_base_sheetnames,
-        }
-
-    def _append_conflict_preview_items(self, items_to_insert, conflict_entries, summary):
-        conflicts, _, _ = compute_conflicts(
-            self.path_local, self.path_base, self.path_remote, include_sheet_data=False,
-        )
-        type_display = {
-            "add_local": ("仅本地新增", "new", False),
-            "add_remote": ("仅线上新增", "new", False),
-            "add_conflict": ("新增冲突", "conflict", True),
-            "delete_conflict_local": ("删除冲突：本地删", "del_conflict", True),
-            "delete_conflict_remote": ("删除冲突：线上删", "del_conflict", True),
-            "modify_conflict": ("修改冲突", "conflict", True),
-        }
-        for c in conflicts:
-            conflict_type = c.get("type", "modify_conflict")
-            suffix, tag, need_choice = type_display.get(conflict_type, ("冲突", "conflict", True))
-            if need_choice:
-                idx = len(conflict_entries)
-                default_choice = "线上" if conflict_type == "delete_conflict_local" else "本地"
-                choice_text = "将保留%s" % default_choice
-                if conflict_type == "delete_conflict_local":
-                    choice_text = "将保留线上（本地已删）"
-                elif conflict_type == "delete_conflict_remote":
-                    choice_text = "将保留本地（线上已删）"
-                conflict_entries.append({
-                    "choice": default_choice,
-                    "data": c,
-                    "kind": "row",
-                    "display": choice_text,
-                })
-                items_to_insert.append((c["sheet"], "%s (%s)" % (c["key"], suffix), choice_text, (str(idx), tag)))
-                summary["conflict"] += 1
-            else:
-                choice_text = "信息：本地新增" if conflict_type == "add_local" else "信息：线上新增"
-                items_to_insert.append((c["sheet"], "%s (%s)" % (c["key"], suffix), choice_text, tag))
-                summary["info"] += 1
 
     def _refresh_merge_tree_page(self):
         """只渲染当前页，避免 Treeview 在大文件下卡顿。"""
@@ -739,22 +624,31 @@ class MergeWindow:
             gui_log("合并列表翻页：第 %d 页，显示 %d 条" % (self._merge_page + 1, shown), self.status_var)
 
     def _fill_commit_info(self, parent, info):
-        parts = []
+        fields = []
         if info and isinstance(info, dict):
             if info.get("short_hash"):
-                parts.append("Hash: %s" % info["short_hash"])
+                fields.append(("Hash", info["short_hash"]))
             if info.get("author"):
-                parts.append("提交人: %s" % info["author"])
-            if info.get("date"):
-                parts.append(info["date"][:19] if len(info["date"]) >= 19 else info["date"])
+                fields.append(("提交人", info["author"]))
             if info.get("message"):
                 msg = info["message"]
-                parts.append("事件: %s" % (msg[:50] + "…" if len(msg) > 50 else msg))
-        if not parts:
-            ttk.Label(parent, text="(无法获取 Git 信息)", foreground="gray", font=("", 8)).pack(anchor=tk.W)
+                fields.append(("事件", msg[:34] + "..." if len(msg) > 34 else msg))
+            if info.get("date"):
+                fields.append(("时间", info["date"][:16] if len(info["date"]) >= 16 else info["date"]))
+        if not fields:
+            ttk.Label(parent, text="无法获取 Git 信息", style="CardMuted.TLabel").pack(anchor=tk.W, pady=(6, 0))
         else:
-            for p in parts:
-                ttk.Label(parent, text=p, font=("", 8)).pack(anchor=tk.W)
+            for label, value in fields:
+                row = ttk.Frame(parent, style="Card.TFrame")
+                row.pack(fill=tk.X, pady=(3, 0))
+                ttk.Label(row, text=label, style="CardMuted.TLabel", width=6).pack(side=tk.LEFT)
+                ttk.Label(row, text=value, style="Card.TLabel").pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+    def _show_selected_merge_detail(self):
+        if not self.tree.selection():
+            messagebox.showinfo("提示", "请先选择一条差异预览记录。")
+            return
+        self._on_merge_tree_double_click(None)
 
     def _open_local(self):
         if open_excel_file(self.path_local):
@@ -1030,28 +924,31 @@ class MergeWindow:
         
         # 处理非冲突项（新增/删除）
         base_side = self._get_base_side()
-        if choice == "（将新增行）":
+        action = str(choice).strip("（）")
+        if action == "将新增行":
             path_base = self.path_local if base_side == "local" else self.path_remote
             path_other = self.path_remote if base_side == "local" else self.path_local
             left_vals, right_vals = self._load_row_from_workbooks(sheet_or_name, key_or_col, path_base, path_other)
             self._show_merge_detail_panel("将新增行 — %s / %s" % (sheet_or_name, key_or_col), "基准(无)", "另一方", left_vals, right_vals)
-        elif choice == "（将删除行）":
+        elif action == "将删除行":
             path_base = self.path_local if base_side == "local" else self.path_remote
             path_other = self.path_remote if base_side == "local" else self.path_local
             left_vals, right_vals = self._load_row_from_workbooks(sheet_or_name, key_or_col, path_base, path_other)
             self._show_merge_detail_panel("将删除行 — %s / %s" % (sheet_or_name, key_or_col), "基准", "另一方(无)", left_vals, right_vals)
-        elif choice == "（将新增列）":
+        elif action == "将新增列":
             left_vals, right_vals = self._load_col_from_workbooks(
                 sheet_or_name, key_or_col, base_side, has_in_other=True
             )
             self._show_merge_detail_panel("将新增列 — %s / %s" % (sheet_or_name, key_or_col), "基准(无)", "另一方", left_vals, right_vals)
-        elif choice == "（将删除列）":
+        elif action == "将删除列":
             left_vals, right_vals = self._load_col_from_workbooks(
                 sheet_or_name, key_or_col, base_side, has_in_other=False
             )
             self._show_merge_detail_panel("将删除列 — %s / %s" % (sheet_or_name, key_or_col), "基准", "另一方(无)", left_vals, right_vals)
-        elif "将新增 Sheet" in choice or "将删除 Sheet" in choice:
+        elif "新增 Sheet" in key_or_col or "删除 Sheet" in key_or_col or "将追加" in action or "将删除" in action:
             messagebox.showinfo("详情", "Sheet: %s\n%s" % (sheet_or_name, choice))
+        else:
+            gui_log("未找到详情处理方式: %s / %s / %s" % (sheet_or_name, key_or_col, choice), self.status_var)
 
     def _load_row_from_workbooks(self, sheet_name, key, path_base, path_other):
         """返回 (base_row_values, other_row_values)，缺失一方为空列表。"""

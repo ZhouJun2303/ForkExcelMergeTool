@@ -54,21 +54,136 @@ def gui_log(msg, log_widget=None, is_error=False):
             pass
 
 
-def make_color_legend(parent, items, bg="#f0f2f5"):
+UI = {
+    "bg": "#F4F7FB",
+    "panel": "#FFFFFF",
+    "panel_alt": "#F8FAFC",
+    "border": "#D8E0EA",
+    "text": "#172033",
+    "muted": "#64748B",
+    "primary": "#2563EB",
+    "primary_active": "#1D4ED8",
+    "success": "#15803D",
+    "success_bg": "#DCFCE7",
+    "warning": "#B45309",
+    "warning_bg": "#FEF3C7",
+    "danger": "#B91C1C",
+    "danger_bg": "#FEE2E2",
+    "deleted": "#64748B",
+    "deleted_bg": "#EEF2F7",
+    "row_alt": "#F8FAFC",
+}
+
+
+def ui_font(size=9, weight="normal"):
+    """统一 UI 字体，优先使用 Windows 中文界面更自然的微软雅黑。"""
+    return ("Microsoft YaHei UI", size, weight)
+
+
+def make_color_legend(parent, items, bg=None):
     """
     在 parent 下生成一行颜色图例。
     items: [(颜色 hex 或 None, "说明文字"), ...]
     """
+    bg = bg or UI["panel"]
     frame = tk.Frame(parent, bg=bg)
     for i, (color, text) in enumerate(items):
         if i > 0:
-            tk.Label(frame, text="  ", bg=bg, font=("Segoe UI", 8)).pack(side=tk.LEFT)
+            tk.Label(frame, text="  ", bg=bg, font=ui_font(8)).pack(side=tk.LEFT)
         if color:
             patch = tk.Frame(frame, width=14, height=14, bg=color, relief=tk.SOLID, borderwidth=1)
             patch.pack(side=tk.LEFT, padx=(0, 4))
             patch.pack_propagate(False)
-        tk.Label(frame, text=text, bg=bg, font=("Segoe UI", 8), fg="#1c1e21").pack(side=tk.LEFT)
+        tk.Label(frame, text=text, bg=bg, font=ui_font(8), fg=UI["muted"]).pack(side=tk.LEFT)
     return frame
+
+
+def make_badge(parent, text, tone="neutral"):
+    """创建一个小状态徽标。tone: primary|success|warning|danger|neutral。"""
+    colors = {
+        "primary": (UI["primary"], "#DBEAFE"),
+        "success": (UI["success"], UI["success_bg"]),
+        "warning": (UI["warning"], UI["warning_bg"]),
+        "danger": (UI["danger"], UI["danger_bg"]),
+        "neutral": (UI["muted"], UI["deleted_bg"]),
+    }
+    fg, bg = colors.get(tone, colors["neutral"])
+    return tk.Label(
+        parent,
+        text=text,
+        fg=fg,
+        bg=bg,
+        font=ui_font(8, "bold"),
+        padx=8,
+        pady=2,
+        relief=tk.FLAT,
+    )
+
+
+def make_separator(parent):
+    line = tk.Frame(parent, bg=UI["border"], height=1)
+    line.pack_propagate(False)
+    return line
+
+
+class ToolTip:
+    """轻量 tooltip，避免引入额外依赖。"""
+
+    def __init__(self, widget, text, delay=450):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self._after_id = None
+        self._tip = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None):
+        self._cancel()
+        self._after_id = self.widget.after(self.delay, self._show)
+
+    def _cancel(self):
+        if self._after_id is not None:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
+    def _show(self):
+        if self._tip is not None or not self.text:
+            return
+        try:
+            x = self.widget.winfo_rootx() + 12
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        except Exception:
+            return
+        tip = tk.Toplevel(self.widget)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry("+%d+%d" % (x, y))
+        label = tk.Label(
+            tip,
+            text=self.text,
+            justify=tk.LEFT,
+            bg="#111827",
+            fg="#F9FAFB",
+            font=ui_font(8),
+            padx=8,
+            pady=5,
+            wraplength=360,
+        )
+        label.pack()
+        self._tip = tip
+
+    def _hide(self, _event=None):
+        self._cancel()
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except Exception:
+                pass
+            self._tip = None
 
 
 def open_excel_file(path):
@@ -123,34 +238,98 @@ def open_containing_folder(path, select_file=True):
 
 
 def setup_merge_styles(root):
-    """为合并/对比窗口配置统一样式：Segoe UI、浅灰背景、主按钮突出。"""
+    """为合并/对比窗口配置统一现代桌面样式。"""
     style = ttk.Style(root)
     try:
         style.theme_use("vista")
     except tk.TclError:
-        pass
-    bg = "#f0f2f5"
-    fg = "#1c1e21"
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+    bg = UI["bg"]
+    panel = UI["panel"]
+    fg = UI["text"]
+    muted = UI["muted"]
+
+    style.configure(".", font=ui_font(9))
     style.configure("TFrame", background=bg)
-    style.configure("TLabel", background=bg, foreground=fg, font=("Segoe UI", 9))
-    style.configure("TLabelframe", background=bg, font=("Segoe UI", 9))
-    style.configure("TLabelframe.Label", background=bg, foreground=fg, font=("Segoe UI", 9, "bold"))
-    style.configure("TButton", font=("Segoe UI", 9), padding=(12, 6))
-    style.configure("Accent.TButton", font=("Segoe UI", 9, "bold"), padding=(14, 7))
-    style.map("Accent.TButton", background=[("active", "#166fe5")])
-    style.configure("Treeview", font=("Segoe UI", 9), rowheight=22, fieldbackground="#fff")
-    style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
+    style.configure("App.TFrame", background=bg)
+    style.configure("Panel.TFrame", background=panel, relief=tk.FLAT)
+    style.configure("Card.TFrame", background=UI["panel_alt"], relief=tk.FLAT)
+    style.configure("Toolbar.TFrame", background=panel)
+    style.configure("BottomBar.TFrame", background=panel)
+    style.configure("TLabel", background=bg, foreground=fg, font=ui_font(9))
+    style.configure("Panel.TLabel", background=panel, foreground=fg, font=ui_font(9))
+    style.configure("Card.TLabel", background=UI["panel_alt"], foreground=fg, font=ui_font(9))
+    style.configure("CardMuted.TLabel", background=UI["panel_alt"], foreground=muted, font=ui_font(8))
+    style.configure("CardSection.TLabel", background=UI["panel_alt"], foreground=fg, font=ui_font(10, "bold"))
+    style.configure("Muted.TLabel", background=panel, foreground=muted, font=ui_font(8))
+    style.configure("Title.TLabel", background=bg, foreground=fg, font=ui_font(16, "bold"))
+    style.configure("PanelTitle.TLabel", background=panel, foreground=fg, font=ui_font(16, "bold"))
+    style.configure("Section.TLabel", background=panel, foreground=fg, font=ui_font(10, "bold"))
+    style.configure("TLabelframe", background=panel, borderwidth=1, relief=tk.SOLID)
+    style.configure("TLabelframe.Label", background=panel, foreground=fg, font=ui_font(9, "bold"))
+    style.configure("TButton", font=ui_font(9), padding=(12, 6))
+    style.configure("Secondary.TButton", font=ui_font(9), padding=(10, 6))
+    style.configure("Tiny.TButton", font=ui_font(8), padding=(7, 3))
+    style.configure("Accent.TButton", font=ui_font(9, "bold"), padding=(14, 7))
+    style.map(
+        "TButton",
+        foreground=[("disabled", "#64748B"), ("!disabled", fg)],
+        background=[("active", "#E2E8F0"), ("disabled", "#F1F5F9"), ("!disabled", "#FFFFFF")],
+    )
+    style.map(
+        "Secondary.TButton",
+        foreground=[("disabled", "#64748B"), ("!disabled", fg)],
+        background=[("active", "#E2E8F0"), ("disabled", "#F1F5F9"), ("!disabled", "#FFFFFF")],
+    )
+    style.map(
+        "Tiny.TButton",
+        foreground=[("disabled", "#64748B"), ("!disabled", fg)],
+        background=[("active", "#E2E8F0"), ("disabled", "#F1F5F9"), ("!disabled", "#FFFFFF")],
+    )
+    style.map(
+        "Accent.TButton",
+        foreground=[("disabled", "#64748B"), ("!disabled", fg)],
+        background=[("active", "#DBEAFE"), ("disabled", "#F1F5F9"), ("!disabled", "#FFFFFF")],
+    )
+    style.configure("TCheckbutton", background=panel, foreground=fg, font=ui_font(9), padding=(2, 4))
+    style.configure("TRadiobutton", background=panel, foreground=fg, font=ui_font(9), padding=(2, 4))
+    style.configure("TCombobox", font=ui_font(9), padding=(8, 4))
+    style.configure("TEntry", font=ui_font(9), padding=(8, 4))
+    style.configure(
+        "Treeview",
+        font=ui_font(9),
+        rowheight=28,
+        fieldbackground=panel,
+        background=panel,
+        foreground=fg,
+        borderwidth=0,
+    )
+    style.configure("Treeview.Heading", font=ui_font(9, "bold"), background=UI["panel_alt"], foreground=fg)
+    style.map(
+        "Treeview",
+        background=[("selected", "#DBEAFE")],
+        foreground=[("selected", fg)],
+    )
     root.configure(bg=bg)
 
 
 class UpdateButtonController:
     """把 GitHub Release 更新检查接到一个 Tk 按钮上。"""
 
-    def __init__(self, root, button, status_var=None, on_quit=None):
+    def __init__(self, root, button, status_var=None, on_quit=None, compact=False):
         self.root = root
         self.button = button
         self.status_var = status_var
         self.on_quit = on_quit
+        self.compact = compact
+        self.default_text = "更新" if compact else "检查更新"
+        self.checking_text = "检查中" if compact else "检查中..."
+        self.available_text = "新版" if compact else None
+        self.downloading_text = "下载中" if compact else "下载中..."
         self.progress_container = None
         self.progress_var = None
         self.progress_bar = None
@@ -158,7 +337,7 @@ class UpdateButtonController:
         self.info = None
         self.checking = False
         self.installing = False
-        self.button.config(text="检查更新", command=self.on_click)
+        self.button.config(text=self.default_text, command=self.on_click)
 
     def bind_progress_widgets(self, progress_bar, progress_var, progress_label=None, progress_container=None):
         self.progress_container = progress_container
@@ -171,7 +350,7 @@ class UpdateButtonController:
         if self.checking:
             return
         self.checking = True
-        self.button.config(text="检查中...", state=tk.DISABLED)
+        self.button.config(text=self.checking_text, state=tk.DISABLED)
         self._set_progress_visible(True, mode="indeterminate", text="检查更新中...")
 
         def worker():
@@ -195,7 +374,7 @@ class UpdateButtonController:
         if self.checking:
             return
         self.checking = True
-        self.button.config(text="检查中...", state=tk.DISABLED)
+        self.button.config(text=self.checking_text, state=tk.DISABLED)
         self._set_progress_visible(True, mode="indeterminate", text="检查更新中...")
         gui_log("正在检查更新...", self.status_var)
 
@@ -214,12 +393,13 @@ class UpdateButtonController:
         self.button.config(state=tk.NORMAL)
         self._set_progress_visible(False)
         if info.get("available"):
-            self.button.config(text="有新版本 v%s" % info.get("latest_version"))
+            text = self.available_text or ("有新版本 v%s" % info.get("latest_version"))
+            self.button.config(text=text)
             gui_log("发现新版本 v%s，请点击按钮更新。" % info.get("latest_version"), self.status_var)
             if not silent:
                 self._confirm_and_install(info)
             return
-        self.button.config(text="检查更新")
+        self.button.config(text=self.default_text)
         if not silent:
             if info.get("missing_asset"):
                 messagebox.showwarning("检查更新", "最新 Release 未找到 ExcelMergeFork.exe。")
@@ -228,7 +408,7 @@ class UpdateButtonController:
 
     def _set_check_error(self, err, silent):
         self.checking = False
-        self.button.config(text="检查更新", state=tk.NORMAL)
+        self.button.config(text=self.default_text, state=tk.NORMAL)
         self._set_progress_visible(False)
         if not silent:
             messagebox.showerror("检查更新失败", str(err))
@@ -248,7 +428,7 @@ class UpdateButtonController:
         if not messagebox.askokcancel("发现新版本", msg):
             return
         self.installing = True
-        self.button.config(text="下载中...", state=tk.DISABLED)
+        self.button.config(text=self.downloading_text, state=tk.DISABLED)
         self._set_progress_visible(True, mode="indeterminate", text="准备下载...")
         gui_log("正在下载 v%s..." % info.get("latest_version"), self.status_var)
 
@@ -268,7 +448,7 @@ class UpdateButtonController:
     def _finish_install(self, script):
         self.installing = False
         self._set_progress_visible(True, mode="determinate", value=100, text="下载完成，等待替换...")
-        self.button.config(text="有新版本 v%s" % self.info.get("latest_version"), state=tk.NORMAL)
+        self.button.config(text=(self.available_text or ("有新版本 v%s" % self.info.get("latest_version"))), state=tk.NORMAL)
         messagebox.showinfo("更新已准备好", "更新包已下载。点击确定后会关闭当前窗口，并自动替换 ExcelMergeFork.exe。")
         launch_update_script(script)
         if self.on_quit:
@@ -280,7 +460,7 @@ class UpdateButtonController:
     def _install_error(self, err):
         self.installing = False
         self._set_progress_visible(False)
-        self.button.config(text="有新版本 v%s" % self.info.get("latest_version"), state=tk.NORMAL)
+        self.button.config(text=(self.available_text or ("有新版本 v%s" % self.info.get("latest_version"))), state=tk.NORMAL)
         if isinstance(err, UpdateError):
             msg = str(err)
         else:

@@ -20,8 +20,12 @@ Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Too
 - **Windows（推荐）**：使用打包好的 `ExcelMergeFork.exe`，**无需安装 Python**。
 - **Python 运行**：需 Python 3.7+，执行 `pip install openpyxl` 后即可用脚本。
 
-**推荐分发方式**：从 GitHub Releases 下载最新版 `ExcelMergeFork.exe`。
-**最小分发包**：只需 `ExcelMergeFork.exe` + 本 `README.md`（对方无需其它文件即可在 Fork 里使用）。Fork 里配置的是 exe 的完整路径，后续应用内更新会原地替换这个 exe，Fork 配置不用改。
+**推荐分发方式**：
+
+- 无 Python 环境：从 GitHub Releases 下载最新版 `ExcelMergeFork.exe`，开箱即用。
+- 已有 Python 环境：使用 `ExcelMergeFork-python.zip`，先执行 `pip install -r requirements.txt`，Fork 指向 `ExcelMergeFork-python.cmd`。
+
+**最小 exe 分发包**：只需 `ExcelMergeFork.exe` + 本 `README.md`（对方无需其它文件即可在 Fork 里使用）。Fork 里配置的是 exe 的完整路径，后续应用内更新会原地替换这个 exe，Fork 配置不用改。
 
 ### 2.1 更新方式
 
@@ -44,6 +48,7 @@ Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Too
 1. 打开 **Fork** → **Preferences（设置）** → **Integration** → **Merge Tool**。
 2. **Merger** 选 **Custom**。
 3. **Merger Path** 填：`ExcelMergeFork.exe` 的**完整路径**（例如：`D:\Tools\ForkExcelMergeTool\ExcelMergeFork.exe`）。
+   - 若使用 Python 轻量版，则填 `ExcelMergeFork-python.cmd` 的完整路径。
 4. **Arguments** 填：`$LOCAL,$BASE,$REMOTE,$MERGED`
    （工具也兼容空格分隔：`$LOCAL $BASE $REMOTE $MERGED`。）
 
@@ -56,6 +61,7 @@ Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Too
 1. **Fork** → **Preferences** → **Integration** → **External Diff Tool**。
 2. **Diff Tool** 选 **Custom**。
 3. **Diff Tool Path** 填：同上，`ExcelMergeFork.exe` 的完整路径。
+   - 若使用 Python 轻量版，则填 `ExcelMergeFork-python.cmd` 的完整路径。
 4. **Arguments** 填：`"$REMOTE" "$LOCAL"`。
 
 配置好后，在 Fork 里对某 Excel 使用「对比」时会生成 `{文件名}_compare.xlsx` 并自动打开。
@@ -202,6 +208,7 @@ python Scripts\MergeExcelFork.py <线上文件REMOTE> <本地文件LOCAL>
 ## 九、给开发者：打包与测试
 
 - **一键打包**：双击 **`package.bat`**，会自动安装依赖、打包 exe、并做一次快速验证。
+- **生成 Python 轻量包**：执行 `package.bat --dist --python-zip`，只生成 `dist\ExcelMergeFork-python.zip`，适合本机已有 Python 的用户。
 - **一键发布 Release**：维护者直接双击或执行 **`publish-release.bat`**，默认会打包、测试并发布。需要本机已安装 GitHub CLI，并先执行过 `gh auth login`，且账号有本仓库 Release 写权限。
 - **仅发布当前 exe**：执行 `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts\publish-release.ps1`。
 - **手动打包**：`pip install pyinstaller` 后执行 `build_exe.bat`。

@@ -7,19 +7,25 @@ import json
 import os
 import re
 import sys
+import threading
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 
 from config import MAX_TREEVIEW_ROWS
 from compare_core import get_compare_data, write_compare_excel
 from gui_common import (
+    ToolTip,
+    UI,
     UpdateButtonController,
     gui_log,
+    make_badge,
     make_color_legend,
     open_containing_folder,
     open_excel_file,
     setup_merge_styles,
 )
+from log_util import log
 from log_util import merge_options_path, release_compare_lock
 from version import __version__ as APP_VERSION
 
@@ -140,17 +146,20 @@ class DiffWindow:
         self._diff_page = 0
         self.diff_page_var = None
         self.is_temp = False
+        self._compare_request_id = 0
+        self._compare_running = False
         self.root = tk.Tk()
         self.auto_open_var = tk.BooleanVar(self.root, value=_load_auto_open_compare())
         self.root.title("Excel 二向对比 v%s" % APP_VERSION)
-        self.root.minsize(700, 500)
-        self.root.geometry("1000x620")
+        self.root.minsize(920, 560)
+        self.root.geometry("1120x680")
         setup_merge_styles(self.root)
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         if self.update_controller:
             self.update_controller.start_background_check()
         _diff_instance = self
+        self.root.after(80, self._start_compare_async)
 
     def _apply_baseline(self):
         """根据当前基准设置 path_a、path_b（供对比逻辑使用）。"""
@@ -159,78 +168,154 @@ class DiffWindow:
         else:
             self.path_a, self.path_b = self.path_online, self.path_local
 
+    @staticmethod
+    def _short_path(path, max_len=118):
+        if not path or len(path) <= max_len:
+            return path
+        keep_tail = max(48, max_len - 34)
+        return path[:28] + "..." + path[-keep_tail:]
+
     def _update_baseline_display(self):
         """根据基准更新标题、路径标签、表格列头。"""
+        path_a = self._short_path(self.path_a)
+        path_b = self._short_path(self.path_b)
+        if self.path_a_tip is not None:
+            self.path_a_tip.text = self.path_a
+        if self.path_b_tip is not None:
+            self.path_b_tip.text = self.path_b
         if self.baseline == "local":
             self.title_var.set("本地 (A) vs 线上 (B)")
-            self.path_a_var.set("A: %s" % (self.path_a[:70] + "…" if len(self.path_a) > 70 else self.path_a))
-            self.path_b_var.set("B: %s" % (self.path_b[:70] + "…" if len(self.path_b) > 70 else self.path_b))
+            self.path_a_var.set("A: %s" % path_a)
+            self.path_b_var.set("B: %s" % path_b)
             self.tree.heading(self.COL_A, text="A(本地)")
             self.tree.heading(self.COL_B, text="B(线上)")
         else:
             self.title_var.set("线上 (A) vs 本地 (B)")
-            self.path_a_var.set("A: %s" % (self.path_a[:70] + "…" if len(self.path_a) > 70 else self.path_a))
-            self.path_b_var.set("B: %s" % (self.path_b[:70] + "…" if len(self.path_b) > 70 else self.path_b))
+            self.path_a_var.set("A: %s" % path_a)
+            self.path_b_var.set("B: %s" % path_b)
             self.tree.heading(self.COL_A, text="A(线上)")
             self.tree.heading(self.COL_B, text="B(本地)")
 
-    def _do_compare(self):
-        """按当前 path_a/path_b 执行对比并刷新列表（不打开文件）。"""
+    def _set_compare_busy(self, busy, text=None):
+        self._compare_running = busy
+        state = tk.DISABLED if busy else tk.NORMAL
+        if hasattr(self, "btn_swap"):
+            self.btn_swap.config(state=state)
+        if hasattr(self, "btn_open_excel"):
+            self.btn_open_excel.config(state=state)
+        if self.status_var is not None:
+            self.status_var.set(text or ("正在计算差异..." if busy else ""))
+
+    def _start_compare_async(self):
+        """按当前 path_a/path_b 后台执行对比并刷新列表。"""
         self._apply_baseline()
-        try:
-            out_dir = os.path.dirname(os.path.abspath(self.path_a))
-            base_name = os.path.splitext(os.path.basename(self.path_a))[0]
-            from config import COMPARE_SUFFIX
-            self.path_out = os.path.join(out_dir, base_name + COMPARE_SUFFIX + ".xlsx")
-            self.is_temp = "Temp" in self.path_a or "Fork" in self.path_a or "tmp" in self.path_a.lower()
-            gui_log("正在计算差异…", self.status_var)
-            path_out, sheet_names, self.diff_rows = get_compare_data(self.path_a, self.path_b, include_same=False)
-            if path_out is None:
-                raise RuntimeError("get_compare_data 失败")
-            self.path_out = path_out
-            write_compare_excel(self.path_out, sheet_names, self.diff_rows, open_file=False)
-            gui_log("已生成对比文件，共 %d 行差异" % len(self.diff_rows), self.status_var)
-            self._refresh_diff_tree()
-        except Exception as e:
-            import traceback
-            gui_log("对比失败: " + str(e), self.status_var, is_error=True)
-            messagebox.showerror("错误", str(e))
+        self._compare_request_id += 1
+        request_id = self._compare_request_id
+        path_a = self.path_a
+        path_b = self.path_b
+        self.diff_rows = []
+        self._visible_diff_rows = []
+        if self.tree is not None:
+            self.tree.delete(*self.tree.get_children())
+        self._set_compare_busy(True, "正在计算差异...")
+
+        def worker():
+            started = time.time()
+            try:
+                out_dir = os.path.dirname(os.path.abspath(path_a))
+                base_name = os.path.splitext(os.path.basename(path_a))[0]
+                from config import COMPARE_SUFFIX
+                expected_out = os.path.join(out_dir, base_name + COMPARE_SUFFIX + ".xlsx")
+                is_temp = "Temp" in path_a or "Fork" in path_a or "tmp" in path_a.lower()
+                path_out, sheet_names, diff_rows = get_compare_data(path_a, path_b, include_same=False)
+                if path_out is None:
+                    raise RuntimeError("get_compare_data 失败")
+                write_compare_excel(path_out, sheet_names, diff_rows, open_file=False)
+                elapsed_ms = int((time.time() - started) * 1000)
+                result = {
+                    "path_out": path_out or expected_out,
+                    "sheet_names": sheet_names,
+                    "diff_rows": diff_rows,
+                    "is_temp": is_temp,
+                    "elapsed_ms": elapsed_ms,
+                }
+            except Exception as e:
+                result = {"error": e}
+            self.root.after(0, lambda: self._finish_compare(request_id, result))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_compare(self, request_id, result):
+        if request_id != self._compare_request_id:
+            return
+        if result.get("error"):
+            err = result["error"]
+            self._set_compare_busy(False, "对比失败")
+            gui_log("对比失败: " + str(err), self.status_var, is_error=True)
+            messagebox.showerror("错误", str(err))
+            return
+        self.path_out = result["path_out"]
+        self.is_temp = bool(result.get("is_temp"))
+        self.diff_rows = list(result.get("diff_rows") or [])
+        self._refresh_diff_tree()
+        _save_diff_filter({k: self.filter_vars[k].get() for k, _ in DIFF_STATUS_OPTIONS})
+        _save_auto_open_compare(self.auto_open_var.get())
+        elapsed_ms = result.get("elapsed_ms", 0)
+        log("对比预览完成: sheets=%d rows=%d elapsed=%dms" % (
+            len(result.get("sheet_names") or []), len(self.diff_rows), elapsed_ms
+        ))
+        self._set_compare_busy(False, "对比完成")
+        gui_log("已生成对比文件，共 %d 行差异，耗时 %dms" % (len(self.diff_rows), elapsed_ms), self.status_var)
+        if self.auto_open_var.get() and self.path_out and os.path.isfile(self.path_out):
+            open_excel_file(self.path_out)
 
     def _on_swap_baseline(self):
         """互换基准（本地↔线上）并重新对比。"""
         self.baseline = "remote" if self.baseline == "local" else "local"
         self._update_baseline_display()
-        self._do_compare()
+        self._start_compare_async()
 
     def activate_and_refresh(self, path_a, path_b):
         """单实例复用：用新路径刷新对比并置前。约定 path_a=本地 path_b=线上。"""
         self.path_local, self.path_online = path_a, path_b
         self._apply_baseline()
         self._update_baseline_display()
-        self._do_compare()
+        self._start_compare_async()
         self.root.lift()
         self.root.focus_force()
 
     def _build_ui(self):
-        pad = 12
-        top = ttk.Frame(self.root, padding=(pad, pad, pad, 6))
+        pad = 14
+        self.status_var = tk.StringVar(self.root, value="")
+        shell = ttk.Frame(self.root, padding=(pad, pad, pad, 0), style="App.TFrame")
+        shell.pack(fill=tk.BOTH, expand=True)
+
+        top = ttk.Frame(shell, padding=(12, 12), style="Panel.TFrame")
         top.pack(fill=tk.X)
-        title_row = ttk.Frame(top)
+        title_row = ttk.Frame(top, style="Panel.TFrame")
         title_row.pack(fill=tk.X)
         self.title_var = tk.StringVar(self.root, value="本地 (A) vs 线上 (B)")
-        ttk.Label(title_row, textvariable=self.title_var, font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT)
-        ttk.Button(title_row, text="互换基准", command=self._on_swap_baseline).pack(side=tk.LEFT, padx=(16, 0))
-        self.btn_update = ttk.Button(title_row, text="检查更新")
-        self.btn_update.pack(side=tk.RIGHT)
+        ttk.Label(title_row, textvariable=self.title_var, style="PanelTitle.TLabel").pack(side=tk.LEFT)
+        make_badge(title_row, "v%s" % APP_VERSION, "primary").pack(side=tk.LEFT, padx=(10, 0))
+        self.btn_update = ttk.Button(title_row, text="更新", width=6, style="Tiny.TButton")
+        self.btn_update.pack(side=tk.LEFT, padx=(6, 0))
+        ToolTip(self.btn_update, "检查新版本")
+        self.btn_swap = ttk.Button(title_row, text="互换基准", command=self._on_swap_baseline, style="Secondary.TButton")
+        self.btn_swap.pack(side=tk.LEFT, padx=(16, 0))
+        ToolTip(self.btn_swap, "交换 A/B 基准并重新计算差异。")
         self.update_controller = UpdateButtonController(
-            self.root, self.btn_update, status_var=None, on_quit=self._on_close,
+            self.root, self.btn_update, status_var=self.status_var, on_quit=self._on_close, compact=True,
         )
         self.path_a_var = tk.StringVar(self.root)
         self.path_b_var = tk.StringVar(self.root)
+        self.path_a_label = None
+        self.path_b_label = None
+        self.path_a_tip = None
+        self.path_b_tip = None
 
-        update_progress_row = ttk.Frame(top)
+        update_progress_row = ttk.Frame(top, style="Panel.TFrame")
         self.update_progress_var = tk.IntVar(self.root, value=0)
-        self.update_progress_label = ttk.Label(update_progress_row, text="", font=("Segoe UI", 8))
+        self.update_progress_label = ttk.Label(update_progress_row, text="", style="Muted.TLabel")
         self.update_progress_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
         self.update_progress_bar = ttk.Progressbar(
             update_progress_row, variable=self.update_progress_var, maximum=100, length=220,
@@ -240,89 +325,98 @@ class DiffWindow:
             self.update_progress_bar, self.update_progress_var, self.update_progress_label, update_progress_row,
         )
 
-        path_row_a = ttk.Frame(top)
-        path_row_a.pack(fill=tk.X, pady=(2, 0))
-        ttk.Label(path_row_a, textvariable=self.path_a_var, font=("Segoe UI", 8)).pack(side=tk.LEFT, anchor=tk.W)
-        ttk.Button(path_row_a, text="打开", command=lambda: self._open_side_file("a")).pack(side=tk.RIGHT, padx=(6, 0))
-        ttk.Button(path_row_a, text="打开所在位置", command=lambda: self._open_side_folder("a")).pack(side=tk.RIGHT)
+        path_panel = ttk.Frame(top, style="Panel.TFrame")
+        path_panel.pack(fill=tk.X, pady=(10, 0))
+        path_row_a = ttk.Frame(path_panel, style="Panel.TFrame")
+        path_row_a.pack(fill=tk.X, pady=(0, 4))
+        make_badge(path_row_a, "A", "neutral").pack(side=tk.LEFT, padx=(0, 8))
+        self.path_a_label = ttk.Label(path_row_a, textvariable=self.path_a_var, style="Panel.TLabel")
+        self.path_a_label.pack(side=tk.LEFT, anchor=tk.W, fill=tk.X, expand=True)
+        self.path_a_tip = ToolTip(self.path_a_label, self.path_a)
+        ttk.Button(path_row_a, text="所在位置", command=lambda: self._open_side_folder("a"), style="Secondary.TButton").pack(side=tk.RIGHT)
+        ttk.Button(path_row_a, text="打开", command=lambda: self._open_side_file("a"), style="Secondary.TButton").pack(side=tk.RIGHT, padx=(6, 6))
 
-        path_row_b = ttk.Frame(top)
-        path_row_b.pack(fill=tk.X, pady=(2, 0))
-        ttk.Label(path_row_b, textvariable=self.path_b_var, font=("Segoe UI", 8)).pack(side=tk.LEFT, anchor=tk.W)
-        ttk.Button(path_row_b, text="打开", command=lambda: self._open_side_file("b")).pack(side=tk.RIGHT, padx=(6, 0))
-        ttk.Button(path_row_b, text="打开所在位置", command=lambda: self._open_side_folder("b")).pack(side=tk.RIGHT)
+        path_row_b = ttk.Frame(path_panel, style="Panel.TFrame")
+        path_row_b.pack(fill=tk.X)
+        make_badge(path_row_b, "B", "neutral").pack(side=tk.LEFT, padx=(0, 8))
+        self.path_b_label = ttk.Label(path_row_b, textvariable=self.path_b_var, style="Panel.TLabel")
+        self.path_b_label.pack(side=tk.LEFT, anchor=tk.W, fill=tk.X, expand=True)
+        self.path_b_tip = ToolTip(self.path_b_label, self.path_b)
+        ttk.Button(path_row_b, text="所在位置", command=lambda: self._open_side_folder("b"), style="Secondary.TButton").pack(side=tk.RIGHT)
+        ttk.Button(path_row_b, text="打开", command=lambda: self._open_side_file("b"), style="Secondary.TButton").pack(side=tk.RIGHT, padx=(6, 6))
 
-        ttk.Label(top, text="（本窗口为二向对比；合并选项 A–G 仅在「合并」时出现，需传入 4 个文件）", font=("Segoe UI", 8), foreground="gray").pack(anchor=tk.W)
-        legend_frame = tk.Frame(self.root, bg="#f0f2f5")
-        legend_frame.pack(fill=tk.X, padx=pad, pady=(0, 6))
-        make_color_legend(legend_frame, [
-            ("#E8F5E9", "绿色=新增行/新增列"),
-            ("#FFEBEE", "红色=删除行/删除列"),
-            ("#FFF3E0", "橙色=修改"),
-        ]).pack(anchor=tk.W)
-        filter_row = ttk.Frame(self.root)
-        filter_row.pack(fill=tk.X, padx=pad, pady=(0, 4))
-        ttk.Label(filter_row, text="筛选显示：").pack(side=tk.LEFT, padx=(0, 8))
+        toolbar = ttk.Frame(shell, padding=(12, 10), style="Panel.TFrame")
+        toolbar.pack(fill=tk.X, pady=(10, 10))
+        ttk.Label(toolbar, text="筛选", style="Section.TLabel").pack(side=tk.LEFT, padx=(0, 10))
         loaded_filter = _load_diff_filter()
         self.filter_vars = {}
         for key, label in DIFF_STATUS_OPTIONS:
             var = tk.BooleanVar(self.root, value=loaded_filter.get(key, True))
             self.filter_vars[key] = var
             cb = ttk.Checkbutton(
-                filter_row, text=label, variable=var,
+                toolbar, text=label, variable=var,
                 command=self._on_diff_filter_changed,
             )
+            cb.configure(text=label)
             cb.pack(side=tk.LEFT, padx=(0, 12))
-        paned = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
-        paned.pack(fill=tk.BOTH, expand=True, padx=pad, pady=(0, 6))
-        table_frame = ttk.LabelFrame(paned, text="差异列表", padding=6)
-        paned.add(table_frame, weight=2)
+        make_color_legend(toolbar, [
+            (UI["success_bg"], "新增"),
+            (UI["danger_bg"], "删除"),
+            (UI["warning_bg"], "修改"),
+        ]).pack(side=tk.RIGHT)
+
+        table_frame = ttk.Frame(shell, padding=(12, 12), style="Panel.TFrame")
+        table_frame.pack(fill=tk.BOTH, expand=True)
+        table_frame.grid_rowconfigure(1, weight=1)
+        table_frame.grid_columnconfigure(0, weight=1)
+        ttk.Label(table_frame, text="差异列表", style="Section.TLabel").grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
+
+        tree_frame = ttk.Frame(table_frame, style="Panel.TFrame")
+        tree_frame.grid(row=1, column=0, sticky="nsew")
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
         cols = (self.COL_SHEET, self.COL_KEY, self.COL_STATUS, self.COL_A, self.COL_B)
-        self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=14)
-        for c, w in [(self.COL_SHEET, 80), (self.COL_KEY, 120), (self.COL_STATUS, 70), (self.COL_A, 200), (self.COL_B, 200)]:
+        self.tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=14)
+        for c, w, min_w in [
+            (self.COL_SHEET, 150, 110),
+            (self.COL_KEY, 120, 90),
+            (self.COL_STATUS, 76, 66),
+            (self.COL_A, 560, 260),
+            (self.COL_B, 560, 260),
+        ]:
             self.tree.heading(c, text=c)
-            self.tree.column(c, width=w)
-        sb = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
-        sbh = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
+            self.tree.column(c, width=w, minwidth=min_w, stretch=False)
+        sb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        sbh = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
         self.tree.configure(yscrollcommand=sb.set, xscrollcommand=sbh.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
-        sbh.pack(side=tk.BOTTOM, fill=tk.X)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+        sbh.grid(row=1, column=0, sticky="ew")
         self.tree.bind("<Double-1>", self._on_tree_double_click)
-        self.tree.tag_configure("新增行", foreground="#008000", background="#E8F5E9")
-        self.tree.tag_configure("删除行", foreground="#CC0000", background="#FFEBEE")
-        self.tree.tag_configure("新增列", foreground="#008000", background="#E8F5E9")
-        self.tree.tag_configure("删除列", foreground="#CC0000", background="#FFEBEE")
-        self.tree.tag_configure("修改", foreground="#CC6600", background="#FFF3E0")
-        self.status_var = tk.StringVar(self.root, value="")
-        status_bar = ttk.Frame(self.root)
-        status_bar.pack(fill=tk.X, padx=pad, pady=(0, 4))
-        ttk.Label(status_bar, textvariable=self.status_var, font=("Segoe UI", 9)).pack(side=tk.LEFT, anchor=tk.W)
-        page_row = ttk.Frame(self.root)
-        page_row.pack(fill=tk.X, padx=pad, pady=(0, 4))
+        self.tree.tag_configure("新增行", foreground=UI["success"], background=UI["success_bg"])
+        self.tree.tag_configure("删除行", foreground=UI["danger"], background=UI["danger_bg"])
+        self.tree.tag_configure("新增列", foreground=UI["success"], background=UI["success_bg"])
+        self.tree.tag_configure("删除列", foreground=UI["danger"], background=UI["danger_bg"])
+        self.tree.tag_configure("修改", foreground=UI["warning"], background=UI["warning_bg"])
+        self.tree.configure(cursor="hand2")
+        page_row = ttk.Frame(table_frame, style="Panel.TFrame")
+        page_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         self.diff_page_var = tk.StringVar(self.root, value="")
-        ttk.Button(page_row, text="上一页", command=lambda: self._change_diff_page(-1)).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(page_row, text="下一页", command=lambda: self._change_diff_page(1)).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Label(page_row, textvariable=self.diff_page_var, font=("Segoe UI", 9)).pack(side=tk.LEFT)
+        ttk.Button(page_row, text="上一页", command=lambda: self._change_diff_page(-1), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(page_row, text="下一页", command=lambda: self._change_diff_page(1), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(page_row, textvariable=self.diff_page_var, style="Panel.TLabel").pack(side=tk.LEFT)
         self._update_baseline_display()
-        try:
-            self._do_compare()
-            _save_diff_filter({k: self.filter_vars[k].get() for k, _ in DIFF_STATUS_OPTIONS})
-            _save_auto_open_compare(self.auto_open_var.get())
-            if self.auto_open_var.get() and self.path_out and os.path.isfile(self.path_out):
-                open_excel_file(self.path_out)
-        except Exception as e:
-            import traceback
-            gui_log("对比失败: " + str(e), self.status_var, is_error=True)
-            messagebox.showerror("错误", str(e))
-        btn_frame = ttk.Frame(self.root, padding=(pad, 8))
+
+        btn_frame = ttk.Frame(self.root, padding=(pad, 10), style="BottomBar.TFrame")
         btn_frame.pack(fill=tk.X)
-        ttk.Button(btn_frame, text="打开 Excel", command=self._open_excel, style="Accent.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(btn_frame, textvariable=self.status_var, style="Panel.TLabel").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.btn_open_excel = ttk.Button(btn_frame, text="打开 Excel", command=self._open_excel, style="Accent.TButton")
+        self.btn_open_excel.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Checkbutton(
             btn_frame, text="对比后自动打开", variable=self.auto_open_var,
             command=lambda: _save_auto_open_compare(self.auto_open_var.get()),
         ).pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Button(btn_frame, text="关闭", command=self._on_close).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="关闭", command=self._on_close, style="Secondary.TButton").pack(side=tk.LEFT)
 
     def _open_side_file(self, side):
         """打开当前 A/B 的原始 Excel 文件。side: 'a' | 'b'"""
@@ -379,8 +473,8 @@ class DiffWindow:
         start = self._diff_page * page_size
         end = min(start + page_size, total)
         for sheet_name, key, status, str_a, str_b in self._visible_diff_rows[start:end]:
-            sa = (str_a[:60] + "…") if len(str_a) > 60 else str_a
-            sb_val = (str_b[:60] + "…") if len(str_b) > 60 else str_b
+            sa = "" if str_a is None else str(str_a)
+            sb_val = "" if str_b is None else str(str_b)
             self.tree.insert("", tk.END, values=(sheet_name, key, status, sa, sb_val), tags=(status,))
         if self.diff_page_var is not None:
             self.diff_page_var.set("第 %d/%d 页，显示 %d-%d / %d" % (
