@@ -62,8 +62,16 @@ Write-Host "Version: $version"
 Write-Host "Tag: $tag"
 Write-Host "SHA256: $sha"
 
-$existing = & gh release view $tag --repo $Repo --json tagName 2>$null
-if ($LASTEXITCODE -eq 0 -and $existing) {
+$existing = $null
+$viewExitCode = 1
+try {
+    $existing = & gh release view $tag --repo $Repo --json tagName 2>$null
+    $viewExitCode = $LASTEXITCODE
+} catch {
+    $existing = $null
+    $viewExitCode = 1
+}
+if ($viewExitCode -eq 0 -and $existing) {
     throw "Release $tag 已存在。请递增版本号或手动处理已有 Release。"
 }
 
