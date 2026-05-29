@@ -12,7 +12,14 @@ from tkinter import ttk, messagebox
 
 from config import MAX_TREEVIEW_ROWS
 from compare_core import get_compare_data, write_compare_excel
-from gui_common import gui_log, make_color_legend, open_containing_folder, open_excel_file, setup_merge_styles
+from gui_common import (
+    UpdateButtonController,
+    gui_log,
+    make_color_legend,
+    open_containing_folder,
+    open_excel_file,
+    setup_merge_styles,
+)
 from log_util import merge_options_path, release_compare_lock
 from version import __version__ as APP_VERSION
 
@@ -127,6 +134,8 @@ class DiffWindow:
         self.path_b = path_b
         self.path_out = None
         self.diff_rows = []
+        self.update_controller = None
+        self.update_progress_var = None
         self._visible_diff_rows = []
         self._diff_page = 0
         self.diff_page_var = None
@@ -139,6 +148,8 @@ class DiffWindow:
         setup_merge_styles(self.root)
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        if self.update_controller:
+            self.update_controller.start_background_check()
         _diff_instance = self
 
     def _apply_baseline(self):
@@ -209,8 +220,25 @@ class DiffWindow:
         self.title_var = tk.StringVar(self.root, value="本地 (A) vs 线上 (B)")
         ttk.Label(title_row, textvariable=self.title_var, font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT)
         ttk.Button(title_row, text="互换基准", command=self._on_swap_baseline).pack(side=tk.LEFT, padx=(16, 0))
+        self.btn_update = ttk.Button(title_row, text="检查更新")
+        self.btn_update.pack(side=tk.RIGHT)
+        self.update_controller = UpdateButtonController(
+            self.root, self.btn_update, status_var=None, on_quit=self._on_close,
+        )
         self.path_a_var = tk.StringVar(self.root)
         self.path_b_var = tk.StringVar(self.root)
+
+        update_progress_row = ttk.Frame(top)
+        self.update_progress_var = tk.IntVar(self.root, value=0)
+        self.update_progress_label = ttk.Label(update_progress_row, text="", font=("Segoe UI", 8))
+        self.update_progress_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
+        self.update_progress_bar = ttk.Progressbar(
+            update_progress_row, variable=self.update_progress_var, maximum=100, length=220,
+        )
+        self.update_progress_bar.grid(row=0, column=1, sticky=tk.W)
+        self.update_controller.bind_progress_widgets(
+            self.update_progress_bar, self.update_progress_var, self.update_progress_label, update_progress_row,
+        )
 
         path_row_a = ttk.Frame(top)
         path_row_a.pack(fill=tk.X, pady=(2, 0))

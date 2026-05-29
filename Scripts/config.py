@@ -22,3 +22,9 @@ MERGE_OPTIONS_FILE = "merge_options.json"
 
 # GUI 表格单次最多渲染行数；大 Excel 仍计算全量结果，但不一次性塞满 Tk Treeview。
 MAX_TREEVIEW_ROWS = 500
+
+# GitHub Release 自动更新配置
+GITHUB_REPO = "ZhouJun2303/ForkExcelMergeTool"
+UPDATE_ASSET_NAME = "ExcelMergeFork.exe"
+UPDATE_SHA256_ASSET_NAME = "ExcelMergeFork.exe.sha256"
+UPDATE_CHECK_TIMEOUT = 8

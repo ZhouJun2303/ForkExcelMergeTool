@@ -7,11 +7,20 @@ GUI 公共组件与样式：日志输出到文件并更新状态栏、颜色图�
 import os
 import subprocess
 import sys
+import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from datetime import datetime
 
 from log_util import log_path, log
+from update_manager import (
+    UpdateError,
+    check_for_update,
+    download_update,
+    get_current_executable,
+    launch_update_script,
+    make_update_script,
+)
 
 
 def gui_log_path():
@@ -132,3 +141,193 @@ def setup_merge_styles(root):
     style.configure("Treeview", font=("Segoe UI", 9), rowheight=22, fieldbackground="#fff")
     style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
     root.configure(bg=bg)
+
+
+class UpdateButtonController:
+    """把 GitHub Release 更新检查接到一个 Tk 按钮上。"""
+
+    def __init__(self, root, button, status_var=None, on_quit=None):
+        self.root = root
+        self.button = button
+        self.status_var = status_var
+        self.on_quit = on_quit
+        self.progress_container = None
+        self.progress_var = None
+        self.progress_bar = None
+        self.progress_label = None
+        self.info = None
+        self.checking = False
+        self.installing = False
+        self.button.config(text="检查更新", command=self.on_click)
+
+    def bind_progress_widgets(self, progress_bar, progress_var, progress_label=None, progress_container=None):
+        self.progress_container = progress_container
+        self.progress_bar = progress_bar
+        self.progress_var = progress_var
+        self.progress_label = progress_label
+        self._set_progress_visible(False)
+
+    def start_background_check(self):
+        if self.checking:
+            return
+        self.checking = True
+        self.button.config(text="检查中...", state=tk.DISABLED)
+        self._set_progress_visible(True, mode="indeterminate", text="检查更新中...")
+
+        def worker():
+            try:
+                info = check_for_update()
+                self.root.after(0, lambda: self._set_check_result(info, silent=True))
+            except Exception as e:
+                self.root.after(0, lambda err=e: self._set_check_error(err, silent=True))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_click(self):
+        if self.installing:
+            return
+        if self.info and self.info.get("available"):
+            self._confirm_and_install(self.info)
+            return
+        self._manual_check()
+
+    def _manual_check(self):
+        if self.checking:
+            return
+        self.checking = True
+        self.button.config(text="检查中...", state=tk.DISABLED)
+        self._set_progress_visible(True, mode="indeterminate", text="检查更新中...")
+        gui_log("正在检查更新...", self.status_var)
+
+        def worker():
+            try:
+                info = check_for_update()
+                self.root.after(0, lambda: self._set_check_result(info, silent=False))
+            except Exception as e:
+                self.root.after(0, lambda err=e: self._set_check_error(err, silent=False))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _set_check_result(self, info, silent):
+        self.checking = False
+        self.info = info
+        self.button.config(state=tk.NORMAL)
+        self._set_progress_visible(False)
+        if info.get("available"):
+            self.button.config(text="有新版本 v%s" % info.get("latest_version"))
+            gui_log("发现新版本 v%s，请点击按钮更新。" % info.get("latest_version"), self.status_var)
+            if not silent:
+                self._confirm_and_install(info)
+            return
+        self.button.config(text="检查更新")
+        if not silent:
+            if info.get("missing_asset"):
+                messagebox.showwarning("检查更新", "最新 Release 未找到 ExcelMergeFork.exe。")
+            else:
+                messagebox.showinfo("检查更新", "当前已是最新版本 v%s。" % info.get("current_version"))
+
+    def _set_check_error(self, err, silent):
+        self.checking = False
+        self.button.config(text="检查更新", state=tk.NORMAL)
+        self._set_progress_visible(False)
+        if not silent:
+            messagebox.showerror("检查更新失败", str(err))
+        else:
+            log("后台检查更新失败: %s" % err, is_error=True)
+
+    def _confirm_and_install(self, info):
+        target = get_current_executable()
+        if not target:
+            messagebox.showinfo("更新提示", "当前是 Python 脚本运行模式，只有打包后的 exe 支持原地更新。")
+            return
+        msg = (
+            "发现新版本 v%s，当前版本 v%s。\n\n"
+            "点击确定后会下载新版 exe；下载完成后需要关闭当前窗口，工具会在退出后替换文件。\n"
+            "如果正在合并冲突，建议先完成或取消当前合并后再更新。"
+        ) % (info.get("latest_version"), info.get("current_version"))
+        if not messagebox.askokcancel("发现新版本", msg):
+            return
+        self.installing = True
+        self.button.config(text="下载中...", state=tk.DISABLED)
+        self._set_progress_visible(True, mode="indeterminate", text="准备下载...")
+        gui_log("正在下载 v%s..." % info.get("latest_version"), self.status_var)
+
+        def worker():
+            try:
+                def on_progress(downloaded, total):
+                    self.root.after(0, lambda d=downloaded, t=total: self._update_download_progress(d, t))
+
+                new_exe = download_update(info, progress_callback=on_progress)
+                script = make_update_script(new_exe, target, restart_after=False)
+                self.root.after(0, lambda: self._finish_install(script))
+            except Exception as e:
+                self.root.after(0, lambda err=e: self._install_error(err))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_install(self, script):
+        self.installing = False
+        self._set_progress_visible(True, mode="determinate", value=100, text="下载完成，等待替换...")
+        self.button.config(text="有新版本 v%s" % self.info.get("latest_version"), state=tk.NORMAL)
+        messagebox.showinfo("更新已准备好", "更新包已下载。点击确定后会关闭当前窗口，并自动替换 ExcelMergeFork.exe。")
+        launch_update_script(script)
+        if self.on_quit:
+            self.on_quit()
+        else:
+            self.root.quit()
+            self.root.destroy()
+
+    def _install_error(self, err):
+        self.installing = False
+        self._set_progress_visible(False)
+        self.button.config(text="有新版本 v%s" % self.info.get("latest_version"), state=tk.NORMAL)
+        if isinstance(err, UpdateError):
+            msg = str(err)
+        else:
+            msg = "更新失败: %s" % err
+        gui_log(msg, self.status_var, is_error=True)
+        messagebox.showerror("更新失败", msg)
+
+    def _set_progress_visible(self, visible, mode="determinate", value=0, text=""):
+        if self.progress_bar is None:
+            return
+        if visible:
+            try:
+                self.progress_bar.config(mode=mode)
+                if mode == "indeterminate":
+                    self.progress_bar.start(12)
+                else:
+                    self.progress_bar.stop()
+                    if self.progress_var is not None:
+                        self.progress_var.set(value)
+                if self.progress_label is not None:
+                    self.progress_label.config(text=text)
+                if self.progress_container is not None:
+                    self.progress_container.pack(fill=tk.X, pady=(6, 0))
+                self.progress_bar.grid()
+                if self.progress_label is not None:
+                    self.progress_label.grid()
+            except Exception:
+                pass
+        else:
+            try:
+                self.progress_bar.stop()
+                if self.progress_var is not None:
+                    self.progress_var.set(0)
+                if self.progress_label is not None:
+                    self.progress_label.config(text="")
+                    self.progress_label.grid_remove()
+                self.progress_bar.grid_remove()
+                if self.progress_container is not None:
+                    self.progress_container.pack_forget()
+            except Exception:
+                pass
+
+    def _update_download_progress(self, downloaded, total):
+        if self.progress_bar is None:
+            return
+        if total > 0:
+            percent = int(downloaded * 100 / total)
+            self._set_progress_visible(True, mode="determinate", value=percent, text="下载中 %d%%" % percent)
+        else:
+            self._set_progress_visible(True, mode="indeterminate", text="下载中...")

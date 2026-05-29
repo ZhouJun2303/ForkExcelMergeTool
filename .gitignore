@@ -21,11 +21,14 @@ env/
 build/
 dist/
 *.exe
+*.exe.bak
+*.exe.sha256
 
 # 日志与临时
 *.log
 *.tmp
 *.temp
+.merge_excel_*.lock
 .cache/
 
 # 测试/输出数据（可本地生成）
@@ -48,3 +51,4 @@ desktop.ini
 
 # PyInstaller
 *.spec.bak
+merge_options.json

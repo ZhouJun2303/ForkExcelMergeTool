@@ -36,6 +36,7 @@ from excel_io import (
 )
 from version import __version__ as APP_VERSION
 from gui_common import (
+    UpdateButtonController,
     gui_log,
     make_color_legend,
     open_excel_file,
@@ -168,6 +169,8 @@ class MergeWindow:
         self.conflict_vars = []
         self.conflict_rows = []
         self.conflict_cols = []
+        self.update_controller = None
+        self.update_progress_var = None
         self._merge_items = []
         self._merge_page = 0
         self.merge_page_var = None
@@ -180,6 +183,8 @@ class MergeWindow:
 
         self.local_info, self.remote_info = get_git_merge_info(path_merged)
         self._build_ui()
+        if self.update_controller:
+            self.update_controller.start_background_check()
         self._on_options_or_base_changed()
 
     def _build_ui(self):
@@ -214,6 +219,22 @@ class MergeWindow:
         self.btn_manual_backup.pack(side=tk.LEFT, padx=8)
         self.btn_open_backup_dir = ttk.Button(backup_btn_row, text="打开备份目录", command=self._on_open_backup_dir)
         self.btn_open_backup_dir.pack(side=tk.LEFT, padx=8)
+        self.btn_update = ttk.Button(backup_btn_row, text="检查更新")
+        self.btn_update.pack(side=tk.LEFT, padx=8)
+        self.update_controller = UpdateButtonController(
+            self.root, self.btn_update, status_var=self.status_var, on_quit=self._quit_for_update,
+        )
+        update_progress_row = ttk.Frame(bottom_bar)
+        self.update_progress_var = tk.IntVar(self.root, value=0)
+        self.update_progress_label = ttk.Label(update_progress_row, text="", font=("Segoe UI", 8))
+        self.update_progress_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
+        self.update_progress_bar = ttk.Progressbar(
+            update_progress_row, variable=self.update_progress_var, maximum=100, length=220,
+        )
+        self.update_progress_bar.grid(row=0, column=1, sticky=tk.W)
+        self.update_controller.bind_progress_widgets(
+            self.update_progress_bar, self.update_progress_var, self.update_progress_label, update_progress_row,
+        )
 
         center = ttk.Frame(self.root)
         center.pack(fill=tk.BOTH, expand=True, padx=pad, pady=(0, pad))
@@ -1086,6 +1107,15 @@ class MergeWindow:
         ttk.Button(btn_row, text="关闭", command=win.destroy).pack(side=tk.LEFT, padx=8)
 
     def _on_cancel(self):
+        global _merge_instance
+        release_merge_lock()
+        if _merge_instance is self:
+            _merge_instance = None
+        self.root.quit()
+        self.root.destroy()
+        sys.exit(1)
+
+    def _quit_for_update(self):
         global _merge_instance
         release_merge_lock()
         if _merge_instance is self:

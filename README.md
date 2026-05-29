@@ -20,8 +20,18 @@ Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Too
 - **Windows（推荐）**：使用打包好的 `ExcelMergeFork.exe`，**无需安装 Python**。
 - **Python 运行**：需 Python 3.7+，执行 `pip install openpyxl` 后即可用脚本。
 
-**分发给他人时**：把整个 `ForkExcelMergeTool` 文件夹复制到任意路径即可。  
-**最小分发包**：只需 `ExcelMergeFork.exe` + 本 `README.md`（对方无需其它文件即可在 Fork 里使用）。
+**推荐分发方式**：从 GitHub Releases 下载最新版 `ExcelMergeFork.exe`。
+**最小分发包**：只需 `ExcelMergeFork.exe` + 本 `README.md`（对方无需其它文件即可在 Fork 里使用）。Fork 里配置的是 exe 的完整路径，后续应用内更新会原地替换这个 exe，Fork 配置不用改。
+
+### 2.1 更新方式
+
+工具会在合并/对比窗口后台检查 GitHub Releases。检查到新版本时，界面上的「检查更新」按钮会变成「有新版本 vX.Y」。
+
+- 不会自动下载或替换，必须由用户点击按钮并确认后才更新。
+- 检查和下载期间按钮会禁用，窗口会显示更新状态；下载时有进度条，无法读取总大小时显示滚动进度。
+- 更新时会下载最新版 `ExcelMergeFork.exe`，如果 Release 里带有 `ExcelMergeFork.exe.sha256` 会自动校验。
+- Windows 正在运行的 exe 不能直接覆盖，所以工具会在你确认后关闭当前窗口，随后原地替换 exe。
+- 如果当前是 Python 脚本运行模式，只会提示更新，不会覆盖源码。
 
 ---
 
@@ -192,10 +202,21 @@ python Scripts\MergeExcelFork.py <文件A> <文件B>
 ## 九、给开发者：打包与测试
 
 - **一键打包**：双击 **`一键打包.bat`**，会自动安装依赖、打包 exe、并做一次快速验证。
+- **一键打包并发布 Release**：执行 `一键打包.bat --gui --test --release`。需要本机已安装 GitHub CLI，并先执行过 `gh auth login`。
+- **仅发布当前 exe**：执行 `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts\publish-release.ps1`。
 - **手动打包**：`pip install pyinstaller` 后执行 `build_exe.bat`。
 - **测试合并**：双击 `run_quick_test.bat`，或手动：  
   `run_merge.bat TestData\local.xlsx TestData\base.xlsx TestData\remote.xlsx TestData\_output\merged.xlsx`
 - **测试对比**：`run_compare.bat TestData\local.xlsx TestData\remote.xlsx`
+
+### 9.1 Release 发布规则
+
+发布脚本会读取 `Scripts\version.py` 的 `__version__`，创建形如 `v2.54` 的 GitHub Release，并上传：
+
+- `ExcelMergeFork.exe`
+- `ExcelMergeFork.exe.sha256`
+
+应用内更新检查固定读取仓库 `ZhouJun2303/ForkExcelMergeTool` 的 latest release，并查找资产名 `ExcelMergeFork.exe`。如果要改仓库或资产名，请同步修改 `Scripts\config.py`。
 
 ---
 
