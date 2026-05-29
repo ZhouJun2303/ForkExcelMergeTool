@@ -6,7 +6,7 @@ Fork Excel Merge Tool 入口。
 
 用法:
   合并（4 参数）: python MergeExcelFork.py <local> <base> <remote> <merged>
-  对比（2 参数）: python MergeExcelFork.py <local> <remote>
+  对比（2 参数，Fork 推荐）: python MergeExcelFork.py <remote> <local>
 
 退出码: 0 成功, 1 参数/文件错误, 2 合并/对比异常
 日志: 与 exe/脚本同目录下的 MergeExcelFork.log
@@ -75,14 +75,14 @@ def main():
                 sys.exit(code)
 
         elif mode == "compare":
-            path_a, path_b = args[0], args[1]
-            if not os.path.isfile(path_a):
-                msg = "文件 A 不存在: %s" % path_a
+            path_remote, path_local = args[0], args[1]
+            if not os.path.isfile(path_remote):
+                msg = "REMOTE 不存在: %s" % path_remote
                 log(msg, is_error=True)
                 print("ERROR: " + msg, file=sys.stderr)
                 sys.exit(1)
-            if not os.path.isfile(path_b):
-                msg = "文件 B 不存在: %s" % path_b
+            if not os.path.isfile(path_local):
+                msg = "LOCAL 不存在: %s" % path_local
                 log(msg, is_error=True)
                 print("ERROR: " + msg, file=sys.stderr)
                 sys.exit(1)
@@ -90,19 +90,19 @@ def main():
                 from diff_gui import DiffWindow, get_existing_diff_window
                 existing = get_existing_diff_window()
                 if existing is not None:
-                    existing.activate_and_refresh(path_a, path_b)
+                    existing.activate_and_refresh(path_local, path_remote)
                     messagebox.showinfo("提示", "对比窗口已存在，已激活并刷新。")
                     sys.exit(0)
                 if not try_acquire_compare_lock():
                     messagebox.showwarning("提示", "对比窗口已在其他进程中打开，请先关闭后再试。")
                     sys.exit(0)
-                win = DiffWindow(path_a, path_b)
+                win = DiffWindow(path_local, path_remote)
                 win.run()
                 sys.exit(0)
             except Exception as gui_err:
                 log("GUI 对比失败，回退命令行: %s" % gui_err)
                 from compare_core import do_compare
-                code = do_compare(path_a, path_b)
+                code = do_compare(path_local, path_remote)
                 sys.exit(code if isinstance(code, int) else 0)
 
         else:

@@ -44,8 +44,8 @@ Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Too
 1. 打开 **Fork** → **Preferences（设置）** → **Integration** → **Merge Tool**。
 2. **Merger** 选 **Custom**。
 3. **Merger Path** 填：`ExcelMergeFork.exe` 的**完整路径**（例如：`D:\Tools\ForkExcelMergeTool\ExcelMergeFork.exe`）。
-4. **Arguments** 填：`$LOCAL $BASE $REMOTE $MERGED`  
-   （若 Fork 把多个参数合成一个，用逗号：`$LOCAL,$BASE,$REMOTE,$MERGED`，工具已支持两种写法。）
+4. **Arguments** 填：`$LOCAL,$BASE,$REMOTE,$MERGED`
+   （工具也兼容空格分隔：`$LOCAL $BASE $REMOTE $MERGED`。）
 
 保存后，在 Fork 里对冲突的 Excel 执行「解决冲突」时会自动用本工具打开。
 
@@ -56,7 +56,7 @@ Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Too
 1. **Fork** → **Preferences** → **Integration** → **External Diff Tool**。
 2. **Diff Tool** 选 **Custom**。
 3. **Diff Tool Path** 填：同上，`ExcelMergeFork.exe` 的完整路径。
-4. **Arguments** 填：`$LOCAL $REMOTE` 或 `$LOCAL,$REMOTE`。
+4. **Arguments** 填：`"$REMOTE" "$LOCAL"`。
 
 配置好后，在 Fork 里对某 Excel 使用「对比」时会生成 `{文件名}_compare.xlsx` 并自动打开。
 
@@ -139,11 +139,11 @@ ExcelMergeFork.exe D:\repo\Test.xlsx D:\repo\Base.xlsx D:\repo\Remote.xlsx D:\re
 **对比（2 个参数）：**
 
 ```text
-ExcelMergeFork.exe <文件A> <文件B>
-python Scripts\MergeExcelFork.py <文件A> <文件B>
+ExcelMergeFork.exe <线上文件REMOTE> <本地文件LOCAL>
+python Scripts\MergeExcelFork.py <线上文件REMOTE> <本地文件LOCAL>
 ```
 
-会生成 `{文件A 同名}_compare.xlsx` 并自动打开。
+会在本地文件同目录生成 `{本地文件名}_compare.xlsx` 并自动打开。
 
 ---
 
