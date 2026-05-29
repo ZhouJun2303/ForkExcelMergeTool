@@ -76,6 +76,14 @@ def build_merged_cells_cache(ws):
     return cache
 
 
+def has_merged_cells(ws):
+    """判断工作表是否存在合并单元格；异常时按无合并处理。"""
+    try:
+        return bool(ws is not None and ws.merged_cells.ranges)
+    except Exception:
+        return False
+
+
 def get_merged_cell_value(ws, row, col, merged_cache=None):
     """
     若 (row, col) 落在合并区域内，返回该区域左上角的值；
@@ -137,18 +145,19 @@ def load_sheet_rows_full(ws, max_col=None, use_cache=False):
             row_list.append("")
         rows.append(row_list)
         row_indices.append(row_idx)
-    # 用合并区域左上角补齐空单元格
-    try:
-        merged_cache = build_merged_cells_cache(ws) if use_cache else None
-        for i in range(len(rows)):
-            for col in range(max_col):
-                cur = rows[i][col]
-                if cur is None or (isinstance(cur, str) and cur.strip() == ""):
-                    v = get_merged_cell_value(ws, row_indices[i], col + 1, merged_cache)
-                    if v is not None:
-                        rows[i][col] = v
-    except Exception:
-        pass
+    # 仅在存在合并单元格时补齐区域左上角值；大文件无合并时跳过这轮全表扫描。
+    if has_merged_cells(ws):
+        try:
+            merged_cache = build_merged_cells_cache(ws) if use_cache else None
+            for i in range(len(rows)):
+                for col in range(max_col):
+                    cur = rows[i][col]
+                    if cur is None or (isinstance(cur, str) and cur.strip() == ""):
+                        v = get_merged_cell_value(ws, row_indices[i], col + 1, merged_cache)
+                        if v is not None:
+                            rows[i][col] = v
+        except Exception:
+            pass
     return rows, row_indices
 
 
@@ -402,7 +411,12 @@ def get_column_values(ws, col_index_1based, max_row=None, use_cache=False):
         return []
     if max_row is None:
         max_row = ws.max_row or 1
-    merged_cache = build_merged_cells_cache(ws) if use_cache else None
+    merged_cache = build_merged_cells_cache(ws) if use_cache and has_merged_cells(ws) else None
+    if merged_cache is None and not has_merged_cells(ws):
+        return [
+            cell_str(ws.cell(row=r, column=col_index_1based).value)
+            for r in range(1, max_row + 1)
+        ]
     return [
         cell_str(get_merged_cell_value(ws, r, col_index_1based, merged_cache))
         for r in range(1, max_row + 1)

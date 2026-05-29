@@ -19,3 +19,6 @@ SKIP_SHEET_PREFIX = "#"
 
 # 合并选项多选框持久化文件名（与 exe/脚本同目录）
 MERGE_OPTIONS_FILE = "merge_options.json"
+
+# GUI 表格单次最多渲染行数；大 Excel 仍计算全量结果，但不一次性塞满 Tk Treeview。
+MAX_TREEVIEW_ROWS = 500

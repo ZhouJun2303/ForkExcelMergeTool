@@ -10,6 +10,7 @@ import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from config import MAX_TREEVIEW_ROWS
 from compare_core import get_compare_data, write_compare_excel
 from gui_common import gui_log, make_color_legend, open_containing_folder, open_excel_file, setup_merge_styles
 from log_util import merge_options_path, release_compare_lock
@@ -46,14 +47,13 @@ def _save_auto_open_compare(value):
         pass
 
 
-# 对比列表可筛选的状态（与 merge 一致：新增行/列、删除行/列、修改、相同），默认全部勾选
+# 对比 GUI 默认只加载差异行，避免大文件中海量“相同”行拖慢界面。
 DIFF_STATUS_OPTIONS = [
     ("新增行", "新增行"),
     ("删除行", "删除行"),
     ("新增列", "新增列"),
     ("删除列", "删除列"),
     ("修改", "修改"),
-    ("相同", "相同"),
 ]
 
 # 旧配置键名兼容
@@ -74,11 +74,11 @@ def _load_diff_filter():
                 if val is None:
                     old_key = next((ok for ok, nk in _LEGACY_DIFF_FILTER_MAP.items() if nk == k), None)
                     val = raw.get(old_key) if old_key else None
-                out[k] = bool(val if val is not None else True)
+                out[k] = bool(val if val is not None else k != "相同")
             return out
     except Exception:
         pass
-    return {k: True for k, _ in DIFF_STATUS_OPTIONS}
+    return {k: k != "相同" for k, _ in DIFF_STATUS_OPTIONS}
 
 
 def _save_diff_filter(visible):
@@ -127,6 +127,9 @@ class DiffWindow:
         self.path_b = path_b
         self.path_out = None
         self.diff_rows = []
+        self._visible_diff_rows = []
+        self._diff_page = 0
+        self.diff_page_var = None
         self.is_temp = False
         self.root = tk.Tk()
         self.auto_open_var = tk.BooleanVar(self.root, value=_load_auto_open_compare())
@@ -170,7 +173,7 @@ class DiffWindow:
             self.path_out = os.path.join(out_dir, base_name + COMPARE_SUFFIX + ".xlsx")
             self.is_temp = "Temp" in self.path_a or "Fork" in self.path_a or "tmp" in self.path_a.lower()
             gui_log("正在计算差异…", self.status_var)
-            path_out, sheet_names, self.diff_rows = get_compare_data(self.path_a, self.path_b)
+            path_out, sheet_names, self.diff_rows = get_compare_data(self.path_a, self.path_b, include_same=False)
             if path_out is None:
                 raise RuntimeError("get_compare_data 失败")
             self.path_out = path_out
@@ -228,7 +231,6 @@ class DiffWindow:
             ("#E8F5E9", "绿色=新增行/新增列"),
             ("#FFEBEE", "红色=删除行/删除列"),
             ("#FFF3E0", "橙色=修改"),
-            (None, "无=相同"),
         ]).pack(anchor=tk.W)
         filter_row = ttk.Frame(self.root)
         filter_row.pack(fill=tk.X, padx=pad, pady=(0, 4))
@@ -264,11 +266,16 @@ class DiffWindow:
         self.tree.tag_configure("新增列", foreground="#008000", background="#E8F5E9")
         self.tree.tag_configure("删除列", foreground="#CC0000", background="#FFEBEE")
         self.tree.tag_configure("修改", foreground="#CC6600", background="#FFF3E0")
-        self.tree.tag_configure("相同", foreground="gray", background="#f5f5f5")
         self.status_var = tk.StringVar(self.root, value="")
         status_bar = ttk.Frame(self.root)
         status_bar.pack(fill=tk.X, padx=pad, pady=(0, 4))
         ttk.Label(status_bar, textvariable=self.status_var, font=("Segoe UI", 9)).pack(side=tk.LEFT, anchor=tk.W)
+        page_row = ttk.Frame(self.root)
+        page_row.pack(fill=tk.X, padx=pad, pady=(0, 4))
+        self.diff_page_var = tk.StringVar(self.root, value="")
+        ttk.Button(page_row, text="上一页", command=lambda: self._change_diff_page(-1)).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(page_row, text="下一页", command=lambda: self._change_diff_page(1)).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(page_row, textvariable=self.diff_page_var, font=("Segoe UI", 9)).pack(side=tk.LEFT)
         self._update_baseline_display()
         try:
             self._do_compare()
@@ -320,16 +327,47 @@ class DiffWindow:
         if not hasattr(self, "filter_vars"):
             return
         visible = {k: self.filter_vars[k].get() for k, _ in DIFF_STATUS_OPTIONS}
-        shown = 0
-        for sheet_name, key, status, str_a, str_b in self.diff_rows:
-            if not visible.get(status, True):
-                continue
+        self._visible_diff_rows = [r for r in self.diff_rows if visible.get(r[2], True)]
+        self._diff_page = 0
+        shown = self._refresh_diff_tree_page()
+        if self.diff_rows and hasattr(self, "status_var") and self.status_var:
+            extra = "，每页显示 %d 条" % MAX_TREEVIEW_ROWS if len(self._visible_diff_rows) > MAX_TREEVIEW_ROWS else ""
+            self.status_var.set("已生成对比文件，共 %d 行，当前显示 %d 条%s" % (len(self.diff_rows), shown, extra))
+
+    def _refresh_diff_tree_page(self):
+        """只渲染当前页差异，避免大文件下 Treeview 卡顿。"""
+        self.tree.delete(*self.tree.get_children())
+        total = len(self._visible_diff_rows)
+        if total <= 0:
+            if self.diff_page_var is not None:
+                self.diff_page_var.set("")
+            return 0
+        page_size = MAX_TREEVIEW_ROWS
+        max_page = max((total - 1) // page_size, 0)
+        if self._diff_page < 0:
+            self._diff_page = 0
+        if self._diff_page > max_page:
+            self._diff_page = max_page
+        start = self._diff_page * page_size
+        end = min(start + page_size, total)
+        for sheet_name, key, status, str_a, str_b in self._visible_diff_rows[start:end]:
             sa = (str_a[:60] + "…") if len(str_a) > 60 else str_a
             sb_val = (str_b[:60] + "…") if len(str_b) > 60 else str_b
             self.tree.insert("", tk.END, values=(sheet_name, key, status, sa, sb_val), tags=(status,))
-            shown += 1
-        if self.diff_rows and hasattr(self, "status_var") and self.status_var:
-            self.status_var.set("已生成对比文件，共 %d 行差异，当前显示 %d 条" % (len(self.diff_rows), shown))
+        if self.diff_page_var is not None:
+            self.diff_page_var.set("第 %d/%d 页，显示 %d-%d / %d" % (
+                self._diff_page + 1, max_page + 1, start + 1, end, total))
+        return end - start
+
+    def _change_diff_page(self, delta):
+        """切换对比列表页。"""
+        if not self._visible_diff_rows:
+            return
+        old_page = self._diff_page
+        self._diff_page += delta
+        shown = self._refresh_diff_tree_page()
+        if self._diff_page != old_page:
+            gui_log("对比列表翻页：第 %d 页，显示 %d 条" % (self._diff_page + 1, shown), self.status_var)
 
     def _on_tree_double_click(self, event):
         """双击列表行：打开详情面板，左右对比显示每个参数完整内容。"""

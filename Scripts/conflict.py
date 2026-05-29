@@ -58,7 +58,7 @@ def _log_merge_diagnostic(sheet_name, n_l, n_b, n_r, n_keys, n_conflict):
         pass
 
 
-def compute_conflicts(path_local, path_base, path_remote):
+def compute_conflicts(path_local, path_base, path_remote, include_sheet_data=True):
     """
     计算三向合并的冲突列表与每 Sheet 的数据结构。
     使用 data_only=False，避免公式单元格缓存为空导致误判。
@@ -66,6 +66,7 @@ def compute_conflicts(path_local, path_base, path_remote):
       - conflicts: list of dict，每项含 sheet, key, local_row, remote_row, base_row，
         以及可选 _only_local / _only_remote（仅一方有的行）；
       - sheet_data: dict[sheet_name] = { base_rows, local_rows, remote_rows, base_ordered, local_ordered, remote_ordered, key_to_row_l, key_to_row_r, key_to_row_b, max_col }；
+        include_sheet_data=False 时返回空 dict，适合 GUI 只展示冲突列表的大文件路径；
       - sheet_names: list of str。
     """
     wb_l = openpyxl.load_workbook(path_local, data_only=False)
@@ -100,9 +101,9 @@ def compute_conflicts(path_local, path_base, path_remote):
             (ws_b.max_column or 1) if ws_b else 1,
             (ws_r.max_column or 1) if ws_r else 1,
         )
-        rows_l, idx_l = load_sheet_rows_full(ws_l, max_col_sheet) if ws_l else ([], [])
-        rows_b, idx_b = load_sheet_rows_full(ws_b, max_col_sheet) if ws_b else ([], [])
-        rows_r, idx_r = load_sheet_rows_full(ws_r, max_col_sheet) if ws_r else ([], [])
+        rows_l, idx_l = load_sheet_rows_full(ws_l, max_col_sheet, use_cache=True) if ws_l else ([], [])
+        rows_b, idx_b = load_sheet_rows_full(ws_b, max_col_sheet, use_cache=True) if ws_b else ([], [])
+        rows_r, idx_r = load_sheet_rows_full(ws_r, max_col_sheet, use_cache=True) if ws_r else ([], [])
 
         dict_l, key_to_row_l, ord_l = _dict_and_order(rows_l, idx_l)
         dict_b, key_to_row_b, ord_b = _dict_and_order(rows_b, idx_b)
@@ -208,22 +209,23 @@ def compute_conflicts(path_local, path_base, path_remote):
                         "base_row": row_b,
                     })
 
-        sheet_data[sheet_name] = {
-            "base_rows": dict_b,
-            "local_rows": dict_l,
-            "remote_rows": dict_r,
-            "base_ordered": ord_b,
-            "local_ordered": ord_l,
-            "remote_ordered": ord_r,
-            "key_to_row_l": key_to_row_l,
-            "key_to_row_r": key_to_row_r,
-            "key_to_row_b": key_to_row_b,
-            "max_col": max(
-                max(len(r) for r in rows_l) if rows_l else 1,
-                max(len(r) for r in rows_b) if rows_b else 1,
-                max(len(r) for r in rows_r) if rows_r else 1,
-            ),
-        }
+        if include_sheet_data:
+            sheet_data[sheet_name] = {
+                "base_rows": dict_b,
+                "local_rows": dict_l,
+                "remote_rows": dict_r,
+                "base_ordered": ord_b,
+                "local_ordered": ord_l,
+                "remote_ordered": ord_r,
+                "key_to_row_l": key_to_row_l,
+                "key_to_row_r": key_to_row_r,
+                "key_to_row_b": key_to_row_b,
+                "max_col": max(
+                    max(len(r) for r in rows_l) if rows_l else 1,
+                    max(len(r) for r in rows_b) if rows_b else 1,
+                    max(len(r) for r in rows_r) if rows_r else 1,
+                ),
+            }
         _log_merge_diagnostic(sheet_name, len(rows_l), len(rows_b), len(rows_r), len(all_keys), n_conflict_sheet)
 
     wb_l.close()

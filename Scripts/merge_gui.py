@@ -13,6 +13,7 @@ from tkinter import ttk, messagebox
 
 import openpyxl
 
+from config import MAX_TREEVIEW_ROWS
 from config import BACKUP_SUBDIR
 from conflict import compute_conflicts_d
 from excel_io import (
@@ -143,6 +144,9 @@ class MergeWindow:
         self.conflict_vars = []
         self.conflict_rows = []
         self.conflict_cols = []
+        self._merge_items = []
+        self._merge_page = 0
+        self.merge_page_var = None
         self.root = tk.Tk()
         self.root.title("Excel 多模式合并 v%s" % APP_VERSION)
         _merge_instance = self
@@ -253,6 +257,12 @@ class MergeWindow:
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
+        page_frame = ttk.Frame(self.content_frame)
+        page_frame.pack(fill=tk.X, pady=(4, 0))
+        self.merge_page_var = tk.StringVar(self.root, value="")
+        ttk.Button(page_frame, text="上一页", command=lambda: self._change_merge_page(-1)).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(page_frame, text="下一页", command=lambda: self._change_merge_page(1)).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(page_frame, textvariable=self.merge_page_var, font=("Segoe UI", 9)).pack(side=tk.LEFT)
         sel_frame = ttk.Frame(self.content_frame)
         sel_frame.pack(fill=tk.X, pady=(4, 0))
         ttk.Label(sel_frame, text="当前选中项：").pack(side=tk.LEFT)
@@ -292,42 +302,49 @@ class MergeWindow:
         path_base = self.path_local if base_side == "local" else self.path_remote
         path_other = self.path_remote if base_side == "local" else self.path_local
 
-        # 一次性加载两个文件的所有数据，避免重复读取
-        wb_base = openpyxl.load_workbook(path_base, data_only=True)
-        wb_other = openpyxl.load_workbook(path_other, data_only=True)
-
-        base_sheets = set(get_sheet_names(wb_base))
-        other_sheets = get_sheet_names(wb_other)
-        sheet_names_common = [n for n in get_sheet_names(wb_base) if n in wb_other.sheetnames]
-
-        # 预加载每个 Sheet 的数据（每个文件只读一次）
         sheet_data_base = {}
         sheet_data_other = {}
-        # 提前保存 sheetnames，避免关闭 workbook 后访问
-        wb_base_sheetnames = list(wb_base.sheetnames)
-        wb_other_sheetnames = list(wb_other.sheetnames)
-        for sheet_name in sheet_names_common:
-            ws_b = wb_base[sheet_name]
-            ws_o = wb_other[sheet_name]
-            max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
-            rows_b, _ = load_sheet_rows_full(ws_b, max_col, use_cache=True)
-            rows_o, _ = load_sheet_rows_full(ws_o, max_col, use_cache=True)
-            sheet_data_base[sheet_name] = {
-                'rows': rows_b,
-                'keys': set(key_str_normalized(r[0]) if r else "" for r in rows_b),
-                'keys_ordered': ordered_keys_normalized(rows_b),
-                'header': load_sheet_header(ws_b, max_col),
-                'header_other': load_sheet_header(ws_o, max_col),
-            }
-            sheet_data_other[sheet_name] = {
-                'rows': rows_o,
-                'keys': set(key_str_normalized(r[0]) if r else "" for r in rows_o),
-                'keys_ordered': ordered_keys_normalized(rows_o),
-                'header': load_sheet_header(ws_o, max_col),
-            }
+        need_row_col_data = ("A" not in options) or ("B" not in options) or ("C" in options) or ("D" in options)
+        need_sheet_names = need_row_col_data or ("E" in options) or ("F" in options)
+        if need_sheet_names:
+            wb_base = openpyxl.load_workbook(path_base, data_only=True)
+            wb_other = openpyxl.load_workbook(path_other, data_only=True)
 
-        wb_base.close()
-        wb_other.close()
+            base_sheets = set(get_sheet_names(wb_base))
+            other_sheets = get_sheet_names(wb_other)
+            other_sheet_set = set(other_sheets)
+            sheet_names_common = [n for n in get_sheet_names(wb_base) if n in wb_other.sheetnames]
+            wb_base_sheetnames = list(wb_base.sheetnames)
+
+            if need_row_col_data:
+                for sheet_name in sheet_names_common:
+                    ws_b = wb_base[sheet_name]
+                    ws_o = wb_other[sheet_name]
+                    max_col = max(ws_b.max_column or 1, ws_o.max_column or 1)
+                    rows_b, _ = load_sheet_rows_full(ws_b, max_col, use_cache=True)
+                    rows_o, _ = load_sheet_rows_full(ws_o, max_col, use_cache=True)
+                    sheet_data_base[sheet_name] = {
+                        'rows': rows_b,
+                        'keys': set(key_str_normalized(r[0]) if r else "" for r in rows_b),
+                        'keys_ordered': ordered_keys_normalized(rows_b),
+                        'header': load_sheet_header(ws_b, max_col),
+                        'header_other': load_sheet_header(ws_o, max_col),
+                    }
+                    sheet_data_other[sheet_name] = {
+                        'rows': rows_o,
+                        'keys': set(key_str_normalized(r[0]) if r else "" for r in rows_o),
+                        'keys_ordered': ordered_keys_normalized(rows_o),
+                        'header': load_sheet_header(ws_o, max_col),
+                    }
+
+            wb_base.close()
+            wb_other.close()
+        else:
+            base_sheets = set()
+            other_sheets = []
+            other_sheet_set = set()
+            sheet_names_common = []
+            wb_base_sheetnames = []
 
         # 禁用 Treeview 重绘，批量插入后再启用
         self.tree.delete(*self.tree.get_children())
@@ -384,14 +401,14 @@ class MergeWindow:
 
         if "F" in options:
             for name in wb_base_sheetnames:
-                if name not in set(get_sheet_names(wb_other)):
+                if name not in other_sheet_set:
                     items_to_insert.append((name, "（将删除 Sheet）", "—", "del"))
                     total += 1
 
         if "G" in options:
             # 使用三向冲突检测（包含删除冲突识别）
             from conflict import compute_conflicts
-            conflicts, _, _ = compute_conflicts(self.path_local, self.path_base, self.path_remote)
+            conflicts, _, _ = compute_conflicts(self.path_local, self.path_base, self.path_remote, include_sheet_data=False)
             
             # 定义冲突类型的显示配置
             type_display = {
@@ -424,7 +441,7 @@ class MergeWindow:
                         choice_text = "将保留本地"
                         var.set("本地")
                     
-                    items_to_insert.append((c["sheet"], c["key"] + suffix, choice_text, tag))
+                    items_to_insert.append((c["sheet"], c["key"] + suffix, choice_text, (str(idx), tag)))
                     total += 1
                 else:
                     # 仅信息展示的项（单方新增，由A选项控制是否插入）
@@ -435,13 +452,48 @@ class MergeWindow:
                     items_to_insert.append((c["sheet"], c["key"] + suffix, choice_text, tag))
                     total += 1
 
-        # 批量插入（禁用重绘后一次插入）
-        for sheet_name, key, choice, tag in items_to_insert:
-            self.tree.insert("", tk.END, values=(sheet_name, key, choice), tags=(tag,))
+        self._merge_items = items_to_insert
+        self._merge_page = 0
+        shown = self._refresh_merge_tree_page()
 
-        self.hint_label.config(text="基准=%s。勾选参与项：%s。下列为将新增/将删除/冲突项，共 %d 条。（切换基准后删除↔新增会互换）\n提示：单方新增行由【A 行不变】选项控制（不勾选A则插入新增行），冲突项可在下方选择保留哪方。" % (
-            "本地" if base_side == "local" else "线上", ", ".join(sorted(options)) or "无", total))
-        gui_log("已加载选项数据，共 %d 条" % total, self.status_var)
+        suffix = "，每页显示 %d 条，可用上一页/下一页翻看" % MAX_TREEVIEW_ROWS if total > MAX_TREEVIEW_ROWS else ""
+        self.hint_label.config(text="基准=%s。勾选参与项：%s。下列为将新增/将删除/冲突项，共 %d 条%s。（切换基准后删除↔新增会互换）\n提示：单方新增行由【A 行不变】选项控制（不勾选A则插入新增行），冲突项可在下方选择保留哪方。" % (
+            "本地" if base_side == "local" else "线上", ", ".join(sorted(options)) or "无", total, suffix))
+        gui_log("已加载选项数据，共 %d 条，显示 %d 条" % (total, shown), self.status_var)
+
+    def _refresh_merge_tree_page(self):
+        """只渲染当前页，避免 Treeview 在大文件下卡顿。"""
+        self.tree.delete(*self.tree.get_children())
+        total = len(self._merge_items)
+        if total <= 0:
+            if self.merge_page_var is not None:
+                self.merge_page_var.set("")
+            return 0
+        page_size = MAX_TREEVIEW_ROWS
+        max_page = max((total - 1) // page_size, 0)
+        if self._merge_page < 0:
+            self._merge_page = 0
+        if self._merge_page > max_page:
+            self._merge_page = max_page
+        start = self._merge_page * page_size
+        end = min(start + page_size, total)
+        for sheet_name, key, choice, tag in self._merge_items[start:end]:
+            tags = tuple(tag) if isinstance(tag, (tuple, list)) else (tag,)
+            self.tree.insert("", tk.END, values=(sheet_name, key, choice), tags=tags)
+        if self.merge_page_var is not None:
+            self.merge_page_var.set("第 %d/%d 页，显示 %d-%d / %d" % (
+                self._merge_page + 1, max_page + 1, start + 1, end, total))
+        return end - start
+
+    def _change_merge_page(self, delta):
+        """切换合并列表页。"""
+        if not self._merge_items:
+            return
+        old_page = self._merge_page
+        self._merge_page += delta
+        shown = self._refresh_merge_tree_page()
+        if self._merge_page != old_page:
+            gui_log("合并列表翻页：第 %d 页，显示 %d 条" % (self._merge_page + 1, shown), self.status_var)
 
     def _fill_commit_info(self, parent, info):
         parts = []

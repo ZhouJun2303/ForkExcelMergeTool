@@ -23,21 +23,22 @@ from excel_io import (
 from log_util import log
 
 
-def get_compare_data(path_a, path_b):
+def get_compare_data(path_a, path_b, include_same=True):
     """
     计算 A、B 两个 Excel 的差异。
     返回 (path_out, sheet_names, diff_rows)：
       - path_out: 将生成的对比文件路径（与 path_a 同目录，文件名为 {base}_compare.xlsx）
       - sheet_names: 参与对比的 Sheet 名列表
       - diff_rows: [(sheet_name, key, status, str_a, str_b), ...]，
-        status 为 "新增行"|"删除行"|"新增列"|"删除列"|"修改"|"相同"
+        status 为 "新增行"|"删除行"|"新增列"|"删除列"|"修改"|"相同"。
+        include_same=False 时跳过相同行，适合 GUI 大文件预览。
     """
     out_dir = os.path.dirname(os.path.abspath(path_a))
     base_name = os.path.splitext(os.path.basename(path_a))[0]
     path_out = os.path.join(out_dir, base_name + COMPARE_SUFFIX + ".xlsx")
 
-    wb_a = openpyxl.load_workbook(path_a, data_only=True)
-    wb_b = openpyxl.load_workbook(path_b, data_only=True)
+    wb_a = openpyxl.load_workbook(path_a, data_only=True, read_only=True)
+    wb_b = openpyxl.load_workbook(path_b, data_only=True, read_only=True)
 
     seen = set()
     sheet_names = []
@@ -100,16 +101,18 @@ def get_compare_data(path_a, path_b):
                 vals_a.append("")
             while len(vals_b) < max_col:
                 vals_b.append("")
-            str_a = " | ".join(vals_a)
-            str_b = " | ".join(vals_b)
             if row_a is None:
                 status = "新增行"
             elif row_b is None:
                 status = "删除行"
-            elif str_a != str_b:
+            elif vals_a != vals_b:
                 status = "修改"
             else:
                 status = "相同"
+            if status == "相同" and not include_same:
+                continue
+            str_a = " | ".join(vals_a)
+            str_b = " | ".join(vals_b)
             diff_rows.append((sheet_name, key, status, str_a, str_b))
 
     wb_a.close()
