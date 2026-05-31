@@ -14,6 +14,11 @@ python MergeExcelFork.py <local> <base> <remote> <merged>
 python Scripts\MergeExcelFork.py <local> <base> <remote> <merged>
 ```
 
+**Git merge driver entry (called by Git):**
+```bash
+ExcelMergeFork.exe --git-merge-driver <base> <current> <other> <repo-path>
+```
+
 **Run compare (2 args):**
 ```bash
 python MergeExcelFork.py <fileA> <fileB>
@@ -47,6 +52,7 @@ run_merge_mode_tests.bat
 | `merge_core.py` | Three-way merge logic with 5 modes (A-E) and options-driven pipeline |
 | `compare_core.py` | Two-way comparison: computes diffs, generates contrast Excel |
 | `git_util.py` | Git operations: `git add`, cleanup temp files, compatibility cleanup for old flat backup files |
+| `git_merge_driver.py` | Git merge driver adapter: copies Git inputs to an isolated temp dir, opens merge GUI, atomically writes confirmed result back to `%A` without `git add` |
 | `merge_gui.py` | Merge window: conflict list, option checkboxes, generate merged result |
 | `diff_gui.py` | Compare window: diff list, generate and open contrast Excel |
 | `gui_common.py` | Shared GUI utilities: status bar logging, color legends, file opening |
@@ -82,6 +88,7 @@ Options (persisted to `merge_options.json`):
 ### Data Flow
 1. **Merge**: `MergeExcelFork.py` → `merge_gui.py` (GUI) or `merge_core.py` (CLI) → `conflict.py` for detection → `excel_io.py` for read/write → `backup_util.py` for backups → `git_util.py` for cleanup
 2. **Compare**: `MergeExcelFork.py` → `diff_gui.py` (GUI) or `compare_core.py` (CLI) → `excel_io.py` → writes `{filename}_compare.xlsx`
+3. **Git driver**: `MergeExcelFork.py --git-merge-driver` → `git_merge_driver.py` → isolated temp workbooks → `merge_gui.py` → confirmed result replaces Git `%A`; no `git add` or Git temp cleanup.
 
 ### Exit Codes
 - **0**: Success

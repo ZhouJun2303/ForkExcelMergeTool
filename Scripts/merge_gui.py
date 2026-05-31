@@ -50,7 +50,8 @@ from preview_core import build_merge_preview
 
 
 # 选项默认值（勾选=参与逻辑）
-DEFAULT_OPTIONS = {"A": True, "B": True, "C": False, "D": False, "E": True, "F": False, "G": True}
+DEFAULT_OPTIONS = {"A": False, "B": False, "C": False, "D": False, "E": True, "F": False, "G": True}
+MERGE_OPTIONS_SCHEMA = 2
 
 
 def _load_options_data():
@@ -84,7 +85,12 @@ def _load_merge_options():
     try:
         data = _load_options_data()
         if data:
-            return {k: bool(data.get(k, DEFAULT_OPTIONS.get(k, False))) for k in "ABCDEFG"}
+            opts = dict(DEFAULT_OPTIONS)
+            if data.get("merge_options_schema") == MERGE_OPTIONS_SCHEMA:
+                return {k: bool(data.get(k, DEFAULT_OPTIONS.get(k, False))) for k in "ABCDEFG"}
+            for k in "CDEFG":
+                opts[k] = bool(data.get(k, DEFAULT_OPTIONS.get(k, False)))
+            return opts
     except Exception:
         pass
     return dict(DEFAULT_OPTIONS)
@@ -96,6 +102,7 @@ def _save_merge_options(opts):
         data = _load_options_data()
         for k in "ABCDEFG":
             data[k] = bool(opts.get(k, DEFAULT_OPTIONS.get(k, False)))
+        data["merge_options_schema"] = MERGE_OPTIONS_SCHEMA
         _save_options_data(data)
     except Exception:
         pass
@@ -141,8 +148,8 @@ class MergeWindow:
     """
 
     OPTIONS = [
-        ("A", "保留基准行"),
-        ("B", "保留基准列"),
+        ("A", "跳过新增行"),
+        ("B", "跳过新增列"),
         ("C", "删除缺失行"),
         ("D", "删除缺失列"),
         ("E", "追加新 Sheet"),
@@ -151,7 +158,7 @@ class MergeWindow:
     ]
     BASE_SIDES = [("local", "本地 (Local)"), ("remote", "线上 (Remote)")]
 
-    def __init__(self, path_local, path_base, path_remote, path_merged):
+    def __init__(self, path_local, path_base, path_remote, path_merged, completion_strategy=None):
         global _merge_instance
         self.path_local = path_local
         self.path_base = path_base
@@ -180,12 +187,15 @@ class MergeWindow:
         self._preview_request_after = None
         self._preview_request_id = 0
         self._preview_loading = False
+        self._merge_generating = False
+        self.completion_strategy = completion_strategy
         self.root = tk.Tk()
         self.root.title("Excel 多模式合并 v%s" % APP_VERSION)
         _merge_instance = self
         self.root.minsize(980, 680)
         self.root.geometry("1180x760")
         setup_merge_styles(self.root)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
         self.local_info, self.remote_info = get_git_merge_info(path_merged)
         self._build_ui()
@@ -295,7 +305,7 @@ class MergeWindow:
         base_cb.current(0)
         base_cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
         base_cb.bind("<<ComboboxSelected>>", lambda e: self._schedule_preview_refresh())
-        ToolTip(base_cb, "基准侧决定默认保留的行、列和格式；切换后自动刷新预览。")
+        ToolTip(base_cb, "基准侧只决定格式来源和默认冲突选择；非冲突单侧修改会按 BASE 自动合并。")
 
         opts_row = ttk.Frame(rules_frame, style="Panel.TFrame")
         opts_row.pack(fill=tk.X, pady=(10, 0))
@@ -308,7 +318,7 @@ class MergeWindow:
                 opts_row, text="%s %s" % (key, label), variable=var, command=self._on_option_click,
             )
             cb.pack(anchor=tk.W, pady=1)
-        ToolTip(opts_row, "A/B 控制是否保留基准结构；C/D/F 控制删除；G 控制冲突选择。")
+        ToolTip(opts_row, "默认会合入另一侧新增行/列；A/B 可跳过新增结构，C/D/F 控制删除，G 控制人工冲突选择。")
 
         backup_frame = ttk.Frame(left_panel, style="Panel.TFrame")
         self.backup_root_var = tk.StringVar(self.root, value=load_saved_backup_root())
@@ -374,6 +384,7 @@ class MergeWindow:
             self.tree.column(c, width=w, minwidth=min_w, stretch=stretch)
         self.tree.tag_configure("new", foreground=UI["success"], background=UI["success_bg"])
         self.tree.tag_configure("del", foreground=UI["deleted"], background=UI["deleted_bg"])
+        self.tree.tag_configure("mod", foreground=UI["warning"], background=UI["warning_bg"])
         self.tree.tag_configure("del_conflict", foreground=UI["warning"], background=UI["warning_bg"])
         self.tree.tag_configure("conflict", foreground=UI["danger"], background=UI["danger_bg"])
         self.tree.configure(cursor="hand2")
@@ -478,10 +489,20 @@ class MergeWindow:
     def _set_preview_busy(self, busy, text=None):
         self._preview_loading = busy
         state = tk.DISABLED if busy else tk.NORMAL
-        if hasattr(self, "btn_merge") and self.btn_merge is not None:
+        if hasattr(self, "btn_merge") and self.btn_merge is not None and not self._merge_generating:
             self.btn_merge.config(state=state)
         if self.preview_status_var is not None:
             self.preview_status_var.set(text or ("正在计算预览..." if busy else ""))
+
+    def _set_merge_generation_busy(self, busy, text=None):
+        self._merge_generating = busy
+        merge_state = tk.DISABLED if busy or self._preview_loading else tk.NORMAL
+        if hasattr(self, "btn_merge") and self.btn_merge is not None:
+            self.btn_merge.config(state=merge_state)
+        if hasattr(self, "btn_confirm") and self.btn_confirm is not None:
+            self.btn_confirm.config(state=tk.DISABLED if busy else (tk.NORMAL if self.merge_done else tk.DISABLED))
+        if self.preview_status_var is not None:
+            self.preview_status_var.set(text or ("正在生成合并结果..." if busy else ""))
 
     def _schedule_preview_refresh(self, delay_ms=160):
         if self._preview_request_after is not None:
@@ -761,6 +782,8 @@ class MergeWindow:
             messagebox.showwarning("提示", "无法打开备份目录")
 
     def _on_generate_merge(self):
+        if self._merge_generating:
+            return
         path_out = os.path.normpath(os.path.abspath(self.path_merged))
         if os.path.isfile(path_out):
             try:
@@ -773,7 +796,7 @@ class MergeWindow:
                 )
                 return
         options = self._get_options()
-        gui_log("生成合并结果，勾选项: %s（未勾选 C 则不删除行）" % ", ".join(sorted(options)) or "无", self.status_var)
+        gui_log("生成合并结果，勾选项: %s（非冲突单侧修改会自动合入）" % (", ".join(sorted(options)) or "无"), self.status_var)
         base_side = self._get_base_side()
         d_choices = []
         if "G" in options:
@@ -789,31 +812,63 @@ class MergeWindow:
                 })
         try:
             self._on_save_backup_root(show_message=False)
-            code = do_merge(
-                self.path_local, self.path_base, self.path_remote, self.path_merged,
-                base_side=base_side, d_choices=d_choices if d_choices else None,
-                options=options, backup_root=self._current_backup_root(),
-            )
-            if code != 0:
-                raise RuntimeError("合并返回码 %d" % code)
-            self.merge_done = True
-            self._merged_file_path = os.path.normpath(os.path.abspath(self.path_merged))
-            self._set_backup_info(getattr(do_merge, "last_backup_info", None))
-            gui_log("合并结果已生成：%s；备份=%s" % (self._merged_file_path, self._backup_dir_path or ""), self.status_var)
-            _save_auto_open_merged(self.auto_open_var.get())
-            self.btn_confirm.config(state=tk.NORMAL)
-            if self.auto_open_var.get() and os.path.isfile(self._merged_file_path):
-                open_excel_file(self._merged_file_path)
-        except PermissionError as e:
-            gui_log("合并失败（文件可能被占用）: " + str(e), self.status_var, is_error=True)
-            messagebox.showerror(
-                "无法写入合并结果",
-                "合并结果文件可能正在被 Excel 打开，请先关闭该文件后再点击「生成合并结果」。"
-            )
         except Exception as e:
-            import traceback
-            gui_log("合并失败: " + str(e), self.status_var, is_error=True)
-            messagebox.showerror("错误", str(e) + "\n" + traceback.format_exc())
+            gui_log("保存合并配置失败: " + str(e), self.status_var, is_error=True)
+            messagebox.showerror("错误", str(e))
+            return
+
+        backup_root = self._current_backup_root()
+        backup_context_path = getattr(self.completion_strategy, "context_path", None)
+        self._set_merge_generation_busy(True, "正在后台生成合并结果...")
+        gui_log("后台生成合并结果已开始。", self.status_var)
+
+        def worker():
+            try:
+                code = do_merge(
+                    self.path_local, self.path_base, self.path_remote, self.path_merged,
+                    base_side=base_side, d_choices=d_choices if d_choices else None,
+                    options=options, backup_root=backup_root,
+                    backup_context_path=backup_context_path,
+                )
+                if code != 0:
+                    raise RuntimeError("合并返回码 %d" % code)
+                result = {
+                    "merged_file": os.path.normpath(os.path.abspath(self.path_merged)),
+                    "backup_info": getattr(do_merge, "last_backup_info", None),
+                }
+            except Exception as e:
+                import traceback
+                result = {"error": e, "traceback": traceback.format_exc()}
+            try:
+                self.root.after(0, lambda: self._finish_generate_merge(result))
+            except Exception:
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_generate_merge(self, result):
+        self._set_merge_generation_busy(False, "合并结果已生成" if not result.get("error") else "合并失败")
+        if result.get("error"):
+            err = result["error"]
+            tb = result.get("traceback", "")
+            if isinstance(err, PermissionError):
+                gui_log("合并失败（文件可能被占用）: " + str(err), self.status_var, is_error=True)
+                messagebox.showerror(
+                    "无法写入合并结果",
+                    "合并结果文件可能正在被 Excel 打开，请先关闭该文件后再点击「生成合并结果」。"
+                )
+            else:
+                gui_log("合并失败: " + str(err), self.status_var, is_error=True)
+                messagebox.showerror("错误", str(err) + "\n" + tb)
+            return
+        self.merge_done = True
+        self._merged_file_path = result["merged_file"]
+        self._set_backup_info(result.get("backup_info"))
+        gui_log("合并结果已生成：%s；备份=%s" % (self._merged_file_path, self._backup_dir_path or ""), self.status_var)
+        _save_auto_open_merged(self.auto_open_var.get())
+        self.btn_confirm.config(state=tk.NORMAL)
+        if self.auto_open_var.get() and os.path.isfile(self._merged_file_path):
+            open_excel_file(self._merged_file_path)
 
     def activate_and_refresh(self, path_local, path_base, path_remote, path_merged):
         """单实例复用：用新路径刷新列表并置前。"""
@@ -837,12 +892,35 @@ class MergeWindow:
         if not self.merge_done:
             messagebox.showwarning("提示", "请先点击「生成合并结果」")
             return
+        if self.completion_strategy is not None:
+            try:
+                result = self.completion_strategy.complete(self)
+            except Exception as e:
+                gui_log("确认失败: " + str(e), self.status_var, is_error=True)
+                messagebox.showerror("确认失败", str(e))
+                return
+            if not getattr(result, "success", False):
+                msg = "\n".join(getattr(result, "errors", None) or ["确认失败，Git 仍保持冲突状态。"])
+                gui_log(msg, self.status_var, is_error=True)
+                messagebox.showerror("确认失败", msg)
+                return
+            messagebox.showinfo("完成", getattr(result, "message", "合并结果已确认。"))
+            self._close_after_success()
+            return
         def _log_cb(msg, is_err=False):
             gui_log(msg, self.status_var, is_error=is_err)
-        stage_merged_and_cleanup(
+        result = stage_merged_and_cleanup(
             self.path_merged, self.path_local, self.path_base, self.path_remote, log_callback=_log_cb,
         )
-        messagebox.showinfo("完成", "冲突已解决：已 git add，已清理临时文件。Fork 将使用合并后的文件。")
+        if not result.success:
+            msg = "\n".join(result.errors or ["确认失败：git add 未成功，已保留窗口和合并结果文件。"])
+            messagebox.showerror("确认失败", msg)
+            return
+        messagebox.showinfo("完成", "冲突已解决：已 git add。Fork 将使用合并后的文件。")
+        self._close_after_success()
+
+    def _close_after_success(self):
+        global _merge_instance
         release_merge_lock()
         if _merge_instance is self:
             _merge_instance = None
@@ -893,7 +971,7 @@ class MergeWindow:
         sheet_or_name, key_or_col, choice = vals[0], vals[1], vals[2]
         
         # 处理冲突项（带索引tag）
-        if tags and tags[0] not in ("new", "del", "del_conflict", "conflict"):
+        if tags and tags[0] not in ("new", "del", "mod", "del_conflict", "conflict"):
             try:
                 idx = int(tags[0])
                 if 0 <= idx < len(self.conflict_entries):

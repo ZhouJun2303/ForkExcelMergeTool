@@ -13,11 +13,18 @@ Fork Excel Merge Tool 入口。
 """
 
 import os
+import csv
 import sys
 import traceback
 
 from tkinter import messagebox
-from log_util import log, try_acquire_compare_lock, try_acquire_merge_lock
+from log_util import (
+    log,
+    release_compare_lock,
+    release_merge_lock,
+    try_acquire_compare_lock,
+    try_acquire_merge_lock,
+)
 
 
 def _normalize_args():
@@ -27,18 +34,40 @@ def _normalize_args():
     """
     raw = sys.argv[1:]
     log("启动 原始 args=%s" % raw)
-    args = []
-    for a in raw:
-        for p in a.split(","):
-            p = p.strip().strip('"').strip("'")
-            if p:
-                args.append(p)
+    if raw and raw[0] == "--git-merge-driver":
+        return "git-driver", raw[1:]
+    raw = list(raw)
+    flags = []
+    if "--include-same" in raw:
+        flags.append("--include-same")
+        raw = [a for a in raw if a != "--include-same"]
+    if len(raw) in (2, 4):
+        args = [a.strip().strip('"').strip("'") for a in raw if a.strip()]
+    elif len(raw) == 1:
+        try:
+            args = [p.strip().strip('"').strip("'") for p in next(csv.reader([raw[0]], skipinitialspace=True)) if p.strip()]
+        except Exception:
+            args = [p.strip().strip('"').strip("'") for p in raw[0].split(",") if p.strip()]
+    else:
+        args = []
+        for a in raw:
+            if "," in a:
+                try:
+                    parts = next(csv.reader([a], skipinitialspace=True))
+                except Exception:
+                    parts = a.split(",")
+            else:
+                parts = [a]
+            for p in parts:
+                p = p.strip().strip('"').strip("'")
+                if p:
+                    args.append(p)
     argc = len(args)
     if argc == 4:
-        return "merge", args
+        return "merge", flags + args
     if argc == 2:
-        return "compare", args
-    return None, args
+        return "compare", flags + args
+    return None, flags + args
 
 
 def main():
@@ -46,6 +75,25 @@ def main():
         mode, args = _normalize_args()
         argc = len(args)
         log("解析后 argc=%d args=%s" % (argc, args))
+
+        include_same = False
+        if "--include-same" in args:
+            include_same = True
+            args = [a for a in args if a != "--include-same"]
+            argc = len(args)
+            if len(args) == 4:
+                mode = "merge"
+            elif len(args) == 2:
+                mode = "compare"
+
+        if mode == "git-driver":
+            if argc != 4:
+                msg = "Usage: --git-merge-driver <base> <current> <other> <repo-path>"
+                log(msg, is_error=True)
+                print(msg, file=sys.stderr)
+                sys.exit(1)
+            from git_merge_driver import run_git_merge_driver
+            sys.exit(run_git_merge_driver(args[0], args[1], args[2], args[3]))
 
         if mode == "merge":
             path_local, path_base, path_remote, path_merged = args[0], args[1], args[2], args[3]
@@ -62,11 +110,17 @@ def main():
                     existing.activate_and_refresh(path_local, path_base, path_remote, path_merged)
                     messagebox.showinfo("提示", "合并窗口已存在，已激活并刷新。")
                     sys.exit(0)
+                lock_acquired = False
                 if not try_acquire_merge_lock():
                     messagebox.showwarning("提示", "合并窗口已在其他进程中打开，请先关闭后再试。")
                     sys.exit(0)
-                win = MergeWindow(path_local, path_base, path_remote, path_merged)
-                win.run()
+                lock_acquired = True
+                try:
+                    win = MergeWindow(path_local, path_base, path_remote, path_merged)
+                    win.run()
+                finally:
+                    if lock_acquired:
+                        release_merge_lock()
                 sys.exit(0)
             except Exception as gui_err:
                 log("GUI 合并失败，回退命令行: %s" % gui_err)
@@ -93,16 +147,22 @@ def main():
                     existing.activate_and_refresh(path_local, path_remote)
                     messagebox.showinfo("提示", "对比窗口已存在，已激活并刷新。")
                     sys.exit(0)
+                lock_acquired = False
                 if not try_acquire_compare_lock():
                     messagebox.showwarning("提示", "对比窗口已在其他进程中打开，请先关闭后再试。")
                     sys.exit(0)
-                win = DiffWindow(path_local, path_remote)
-                win.run()
+                lock_acquired = True
+                try:
+                    win = DiffWindow(path_local, path_remote)
+                    win.run()
+                finally:
+                    if lock_acquired:
+                        release_compare_lock()
                 sys.exit(0)
             except Exception as gui_err:
                 log("GUI 对比失败，回退命令行: %s" % gui_err)
                 from compare_core import do_compare
-                code = do_compare(path_local, path_remote)
+                code = do_compare(path_local, path_remote, include_same=include_same)
                 sys.exit(code if isinstance(code, int) else 0)
 
         else:

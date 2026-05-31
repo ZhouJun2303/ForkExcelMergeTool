@@ -15,6 +15,8 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 from backup_util import create_merge_backup
+from config import ENABLE_MERGE_KEY_DIAGNOSTICS
+from conflict import compute_auto_row_actions
 from excel_io import (
     build_merged_cells_cache,
     cell_str,
@@ -41,6 +43,8 @@ from log_util import log
 def _log_merged_sheet_keys(path_merged, base_side, options, sheet_name="Data_Language"):
     """合并完成后打日志：MERGED 中指定 sheet 的 key 数量及是否含 Store_DrawHero（便于排查基准/选项是否生效）。"""
     try:
+        if not ENABLE_MERGE_KEY_DIAGNOSTICS:
+            return
         if not path_merged or not os.path.isfile(path_merged):
             return
         wb = openpyxl.load_workbook(path_merged, data_only=True)
@@ -416,22 +420,16 @@ def _merge_mode_c_impl(path_base_side, path_other_side, path_merged, base_side):
     other_sheets = get_sheet_names(wb_other)
     new_sheets = [n for n in other_sheets if n not in base_sheets]
 
-    wb_out = openpyxl.Workbook()
-    wb_out.remove(wb_out.active)
-    for name in get_sheet_names(wb_base):
-        ws = wb_base[name]
-        ws_new = wb_out.create_sheet(name)
-        for r in ws.iter_rows():
-            for c in r:
-                dst = ws_new.cell(row=c.row, column=c.column, value=c.value)
-                _copy_cell_style(c, dst)
-        for r in ws.row_dimensions:
-            if ws.row_dimensions[r].height is not None:
-                ws_new.row_dimensions[r].height = ws.row_dimensions[r].height
-        for c in ws.column_dimensions:
-            if ws.column_dimensions[c].width is not None:
-                ws_new.column_dimensions[c].width = ws.column_dimensions[c].width
-        _copy_merged_cells(ws, ws_new)
+    os.makedirs(os.path.dirname(os.path.abspath(path_merged)) or ".", exist_ok=True)
+    if not new_sheets:
+        wb_base.close()
+        wb_other.close()
+        if os.path.abspath(path_base_side) != os.path.abspath(path_merged):
+            shutil.copy2(path_base_side, path_merged)
+        log("[Mode C] 无新增 Sheet，直接保留完整工作簿 MERGED=%s" % path_merged)
+        return
+
+    wb_out = wb_base
     for name in new_sheets:
         ws = wb_other[name]
         ws_new = wb_out.create_sheet(name)
@@ -447,11 +445,9 @@ def _merge_mode_c_impl(path_base_side, path_other_side, path_merged, base_side):
                 ws_new.column_dimensions[c].width = ws.column_dimensions[c].width
         _copy_merged_cells(ws, ws_new)
 
-    wb_base.close()
     wb_other.close()
     if not wb_out.sheetnames:
         wb_out.create_sheet("Data")
-    os.makedirs(os.path.dirname(os.path.abspath(path_merged)) or ".", exist_ok=True)
     wb_out.save(path_merged)
     wb_out.close()
     log("[Mode C] 新增 Sheet 插入完成 MERGED=%s new_sheets=%s" % (path_merged, new_sheets))
@@ -481,6 +477,7 @@ def _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choice
         wb_local.close()
 
     wb_local = openpyxl.load_workbook(path_local, data_only=False)
+    wb_base = openpyxl.load_workbook(path_base, data_only=False)
     wb_remote = openpyxl.load_workbook(path_remote, data_only=False)
 
     sheet_names = list(wb_out.sheetnames)
@@ -494,6 +491,7 @@ def _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choice
             continue
         ws_out = wb_out[sheet_name]
         ws_l = wb_local[sheet_name] if sheet_name in wb_local.sheetnames else None
+        ws_b = wb_base[sheet_name] if sheet_name in wb_base.sheetnames else None
         ws_r = wb_remote[sheet_name] if sheet_name in wb_remote.sheetnames else None
         max_col = ws_out.max_column or 1
         max_row = ws_out.max_row or 1
@@ -517,29 +515,49 @@ def _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choice
                 ws_out.insert_rows(row_idx_out, 1)
                 _shift_merged_cells_after_insert_rows(ws_out, row_idx_out, 1)
             _font_mod = Font(color="CC6600")
+            auto_type = item.get("type")
+            if auto_type in ("take_local", "take_remote"):
+                row_idx_base = None
+                if ws_b is not None:
+                    key_to_row_base = _row_key_to_index(ws_b, max_col)
+                    row_idx_base = key_to_row_base.get(key_norm)
+                for c in range(1, max_col + 1):
+                    src_c = source.cell(row=row_idx_source, column=c)
+                    base_val = ws_b.cell(row=row_idx_base, column=c).value if ws_b is not None and row_idx_base else None
+                    if cell_str(src_c.value) == cell_str(base_val):
+                        continue
+                    dst_c = ws_out.cell(row=row_idx_out, column=c, value=src_c.value)
+                    _copy_cell_style(src_c, dst_c)
+                    dst_c.font = _font_mod
+                continue
             for c in range(1, max_col + 1):
                 src_c = source.cell(row=row_idx_source, column=c)
                 dst_c = ws_out.cell(row=row_idx_out, column=c, value=src_c.value)
                 _copy_cell_style(src_c, dst_c)
                 dst_c.font = _font_mod
         else:
+            header_out = load_sheet_header(ws_out, max_col)
             header_l = load_sheet_header(ws_l, max_col) if ws_l else []
             header_r = load_sheet_header(ws_r, max_col) if ws_r else []
-            norm_key = key_str_normalized(key)
-            col_idx_l = _normalized_header_to_index(header_l).get(norm_key)
-            col_idx_r = _normalized_header_to_index(header_r).get(norm_key)
+            norm_key = header_normalize_for_compare(key)
+            col_idx_out = _compare_header_to_index(header_out).get(norm_key)
+            col_idx_l = _compare_header_to_index(header_l).get(norm_key)
+            col_idx_r = _compare_header_to_index(header_r).get(norm_key)
             col_idx = col_idx_l if choice == "local" else col_idx_r
             source = ws_l if choice == "local" else ws_r
             if col_idx is None or not source:
                 continue
+            if col_idx_out is None:
+                col_idx_out = (ws_out.max_column or 0) + 1
             _font_mod = Font(color="CC6600")
             for r in range(1, max_row + 1):
                 src_c = source.cell(row=r, column=col_idx)
-                dst_c = ws_out.cell(row=r, column=col_idx, value=src_c.value)
+                dst_c = ws_out.cell(row=r, column=col_idx_out, value=src_c.value)
                 _copy_cell_style(src_c, dst_c)
                 dst_c.font = _font_mod
 
     wb_local.close()
+    wb_base.close()
     wb_remote.close()
     if not wb_out.sheetnames:
         wb_out.create_sheet("Data")
@@ -793,6 +811,22 @@ def _merge_mode_b_preserve_format(path_in, path_other_side, path_out, base_side)
     log("[Option B] 新增列插入（保留格式）完成 %s" % path_out)
 
 
+def _merge_choices(d_choices, auto_actions):
+    merged = []
+    seen = set()
+    for item in list(d_choices or []) + list(auto_actions or []):
+        key = (
+            item.get("sheet"),
+            item.get("key"),
+            item.get("kind", "row"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
+
+
 def _do_merge_by_options(path_local, path_base, path_remote, path_merged, options, base_side, d_choices):
     options = set(options or [])
     path_base_side = path_local if base_side == "local" else path_remote
@@ -827,12 +861,14 @@ def _do_merge_by_options(path_local, path_base, path_remote, path_merged, option
         if "F" in options:
             _merge_delete_sheets_impl(path_cur, path_other_side, path_cur + ".tmp")
             os.replace(path_cur + ".tmp", path_cur)
-        if "G" in options and d_choices:
-            _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choices, path_initial_merged=path_cur)
+        auto_actions = compute_auto_row_actions(path_local, path_base, path_remote)
+        all_choices = _merge_choices(d_choices if "G" in options else [], auto_actions)
+        if all_choices:
+            _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, all_choices, path_initial_merged=path_cur)
         else:
             os.makedirs(os.path.dirname(os.path.abspath(path_merged)) or ".", exist_ok=True)
             shutil.copy2(path_cur, path_merged)
-        log("[Options] 管道完成 MERGED=%s options=%s" % (path_merged, options))
+        log("[Options] 管道完成 MERGED=%s options=%s auto_actions=%d" % (path_merged, options, len(auto_actions)))
         _log_merged_sheet_keys(path_merged, base_side, options)
     finally:
         try:
@@ -849,7 +885,7 @@ def _do_merge_by_options(path_local, path_base, path_remote, path_merged, option
 # 统一入口与备份
 # ---------------------------------------------------------------------------
 
-def do_merge(path_local, path_base, path_remote, path_merged, mode="E", base_side="local", d_choices=None, options=None, backup_root=None):
+def do_merge(path_local, path_base, path_remote, path_merged, mode="E", base_side="local", d_choices=None, options=None, backup_root=None, backup_context_path=None):
     """
     执行合并并写入 MERGED，并备份到 指定根目录/项目/时间。
     options: 若提供则为多选集合 {"A","B","C","D","E","F","G"}，此时忽略 mode。
@@ -858,6 +894,7 @@ def do_merge(path_local, path_base, path_remote, path_merged, mode="E", base_sid
     base_side: "local"|"remote"
     d_choices: G 或冲突时需要；list of {"sheet", "key", "choice", "kind"}。
     backup_root: 可选备份根目录；未提供时读取本地配置，仍未设置则使用 MERGED 同目录下 MergeExcelBackup。
+    backup_context_path: 可选逻辑目标路径；driver 模式可用真实仓库路径决定备份目录和文件名。
     返回 0 成功，2 异常；成功后 do_merge.last_backup_info 保存本次备份信息。
     """
     do_merge.last_backup_info = None
@@ -873,9 +910,13 @@ def do_merge(path_local, path_base, path_remote, path_merged, mode="E", base_sid
         elif mode == "C":
             _merge_mode_c_impl(path_base_side, path_other_side, path_merged, base_side)
         elif mode == "D":
-            _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choices or [])
+            auto_actions = compute_auto_row_actions(path_local, path_base, path_remote)
+            _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, _merge_choices(d_choices or [], auto_actions))
         elif mode == "E":
-            _merge_mode_e_impl(path_local, path_base, path_remote, path_merged, base_side, d_choices or [])
+            _do_merge_by_options(
+                path_local, path_base, path_remote, path_merged,
+                options={"E", "G"}, base_side=base_side, d_choices=d_choices or [],
+            )
         else:
             log("未知 mode=%s，回退到 A" % mode)
             _merge_mode_a_impl(path_base_side, path_other_side, path_merged, base_side)
@@ -887,7 +928,10 @@ def do_merge(path_local, path_base, path_remote, path_merged, mode="E", base_sid
         return 2
 
     try:
-        backup_info = create_merge_backup(path_local, path_remote, path_merged, backup_root=backup_root)
+        backup_info = create_merge_backup(
+            path_local, path_remote, path_merged,
+            backup_root=backup_root, context_path=backup_context_path,
+        )
         do_merge.last_backup_info = backup_info
         backup_dir = backup_info["dir"]
     except Exception as e:

@@ -245,6 +245,103 @@ def compute_conflicts(path_local, path_base, path_remote, include_sheet_data=Tru
     return conflicts, sheet_data, sheet_names
 
 
+def compute_auto_row_actions(path_local, path_base, path_remote):
+    """
+    计算 BASE 中心的非冲突行级自动动作。
+    返回 list，每项含 sheet/key/choice/type/kind，可直接转为 D 模式选择：
+      - take_local / take_remote: 单侧修改，自动采用修改侧
+      - delete_local / delete_remote: 单侧删除且另一侧未改，自动删除
+    """
+    wb_l = openpyxl.load_workbook(path_local, data_only=False)
+    wb_b = openpyxl.load_workbook(path_base, data_only=False)
+    wb_r = openpyxl.load_workbook(path_remote, data_only=False)
+    try:
+        seen = set()
+        sheet_names = []
+        for wb in (wb_b, wb_l, wb_r):
+            for name in get_sheet_names(wb):
+                if name not in seen:
+                    seen.add(name)
+                    sheet_names.append(name)
+
+        actions = []
+        for sheet_name in sheet_names:
+            ws_l = wb_l[sheet_name] if sheet_name in wb_l.sheetnames else None
+            ws_b = wb_b[sheet_name] if sheet_name in wb_b.sheetnames else None
+            ws_r = wb_r[sheet_name] if sheet_name in wb_r.sheetnames else None
+            max_col = max(
+                (ws_l.max_column or 1) if ws_l else 1,
+                (ws_b.max_column or 1) if ws_b else 1,
+                (ws_r.max_column or 1) if ws_r else 1,
+            )
+            rows_l, idx_l = load_sheet_rows_full(ws_l, max_col, use_cache=True) if ws_l else ([], [])
+            rows_b, idx_b = load_sheet_rows_full(ws_b, max_col, use_cache=True) if ws_b else ([], [])
+            rows_r, idx_r = load_sheet_rows_full(ws_r, max_col, use_cache=True) if ws_r else ([], [])
+            dict_l, key_to_row_l, _ = _dict_and_order(rows_l, idx_l)
+            dict_b, key_to_row_b, _ = _dict_and_order(rows_b, idx_b)
+            dict_r, key_to_row_r, _ = _dict_and_order(rows_r, idx_r)
+
+            for key in set(dict_b) | set(dict_l) | set(dict_r):
+                if 1 in (
+                    key_to_row_l.get(key),
+                    key_to_row_b.get(key),
+                    key_to_row_r.get(key),
+                ):
+                    continue
+                row_b = dict_b.get(key)
+                if row_b is None:
+                    continue
+                row_l = dict_l.get(key)
+                row_r = dict_r.get(key)
+                if row_l is None and row_r is None:
+                    continue
+                if row_l is None:
+                    if row_equal(row_r, row_b):
+                        actions.append({
+                            "sheet": sheet_name,
+                            "key": key,
+                            "choice": "local",
+                            "kind": "row",
+                            "type": "delete_local",
+                        })
+                    continue
+                if row_r is None:
+                    if row_equal(row_l, row_b):
+                        actions.append({
+                            "sheet": sheet_name,
+                            "key": key,
+                            "choice": "remote",
+                            "kind": "row",
+                            "type": "delete_remote",
+                        })
+                    continue
+                if row_equal(row_l, row_r):
+                    continue
+                local_changed = not row_equal(row_l, row_b)
+                remote_changed = not row_equal(row_r, row_b)
+                if local_changed and not remote_changed:
+                    actions.append({
+                        "sheet": sheet_name,
+                        "key": key,
+                        "choice": "local",
+                        "kind": "row",
+                        "type": "take_local",
+                    })
+                elif remote_changed and not local_changed:
+                    actions.append({
+                        "sheet": sheet_name,
+                        "key": key,
+                        "choice": "remote",
+                        "kind": "row",
+                        "type": "take_remote",
+                    })
+        return actions
+    finally:
+        wb_l.close()
+        wb_b.close()
+        wb_r.close()
+
+
 def compute_conflicts_d(path_local, path_remote, path_base=None):
     """
     D 模式：二向冲突检测（冲突行 + 冲突列）。

@@ -19,8 +19,10 @@ import urllib.request
 from config import (
     GITHUB_REPO,
     UPDATE_ASSET_NAME,
+    UPDATE_CHECK_INTERVAL_SECONDS,
     UPDATE_CHECK_TIMEOUT,
     UPDATE_SHA256_ASSET_NAME,
+    UPDATE_STATE_FILE,
 )
 from log_util import log, log_dir
 from version import __version__ as APP_VERSION
@@ -31,6 +33,79 @@ LATEST_RELEASE_API = "https://api.github.com/repos/%s/releases/latest" % GITHUB_
 
 class UpdateError(Exception):
     """更新流程异常。"""
+
+
+def update_state_path():
+    """返回自动更新检查缓存文件路径。"""
+    return os.path.join(log_dir(), UPDATE_STATE_FILE)
+
+
+def _read_update_state():
+    try:
+        path = update_state_path()
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+def _write_update_state(state):
+    try:
+        path = update_state_path()
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log("写入更新检查缓存失败: %s" % e, is_error=True)
+
+
+def _info_for_cache(info):
+    keep = {}
+    for key in (
+        "available",
+        "current_version",
+        "latest_version",
+        "html_url",
+        "body",
+        "published_at",
+        "missing_asset",
+    ):
+        keep[key] = info.get(key)
+    return keep
+
+
+def cached_update_info():
+    """读取上次检查结果。只有当前版本仍匹配时才返回缓存 info。"""
+    state = _read_update_state()
+    info = state.get("info")
+    if not isinstance(info, dict):
+        return None
+    if info.get("current_version") != APP_VERSION:
+        return None
+    return info
+
+
+def should_auto_check_update(now=None):
+    """自动检查最多每 7 天触发一次；手动点击不受限制。"""
+    state = _read_update_state()
+    checked_at = state.get("checked_at")
+    if not isinstance(checked_at, (int, float)):
+        return True
+    return (now or time.time()) - checked_at >= UPDATE_CHECK_INTERVAL_SECONDS
+
+
+def remember_update_check(info, checked_at=None):
+    """保存检查时间和轻量结果，用于启动时显示新版标识。"""
+    _write_update_state({
+        "checked_at": checked_at or time.time(),
+        "info": _info_for_cache(info or {}),
+    })
 
 
 def _parse_version(text):

@@ -5,6 +5,9 @@ Excel 读写与行/Key 抽象。
 以及 Key 规范化、行相等判断，不包含合并算法或对比逻辑。
 """
 
+import re
+from decimal import Decimal, InvalidOperation
+
 import openpyxl
 
 from config import SKIP_SHEET_PREFIX
@@ -31,13 +34,33 @@ def key_str_normalized(c):
     s = str(c).strip()
     if not s:
         return ""
-    try:
-        f = float(s)
-        if f == int(f):
-            return str(int(f))
-        return str(f)
-    except ValueError:
+    if isinstance(c, int):
+        return str(c)
+    if isinstance(c, float):
+        try:
+            d = Decimal(str(c))
+            if d.is_finite() and d == d.to_integral_value():
+                return str(d.quantize(Decimal(1)))
+            return format(d.normalize(), "f").rstrip("0").rstrip(".") or "0"
+        except (InvalidOperation, ValueError, OverflowError):
+            return s
+    if re.match(r"^0\d+$", s):
         return s
+    if re.match(r"^[+-]?(?:\d+)(?:\.0+)?$", s):
+        try:
+            d = Decimal(s)
+            if d.is_finite() and d == d.to_integral_value():
+                return str(d.quantize(Decimal(1)))
+        except (InvalidOperation, ValueError, OverflowError):
+            return s
+    if re.match(r"^[+-]?\d+\.\d+$", s):
+        try:
+            d = Decimal(s)
+            if d.is_finite():
+                return format(d.normalize(), "f").rstrip("0").rstrip(".") or "0"
+        except (InvalidOperation, ValueError, OverflowError):
+            return s
+    return s
 
 
 # -----------------------------------------------------------------------------
@@ -76,6 +99,22 @@ def build_merged_cells_cache(ws):
     return cache
 
 
+def build_merged_cells_row_index(ws):
+    """
+    构建按行分桶的合并单元格索引，避免大范围合并区域按面积展开。
+    返回 dict[row] = [(min_col, max_col, value), ...]。
+    """
+    index = {}
+    try:
+        for rng in ws.merged_cells.ranges:
+            val = ws.cell(row=rng.min_row, column=rng.min_col).value
+            for row in range(rng.min_row, rng.max_row + 1):
+                index.setdefault(row, []).append((rng.min_col, rng.max_col, val))
+    except Exception:
+        pass
+    return index
+
+
 def has_merged_cells(ws):
     """判断工作表是否存在合并单元格；异常时按无合并处理。"""
     try:
@@ -91,6 +130,12 @@ def get_merged_cell_value(ws, row, col, merged_cache=None):
     若提供 merged_cache 参数则使用 O(1) 查找，否则遍历 ranges。
     """
     if merged_cache is not None:
+        if isinstance(merged_cache, dict) and (row, col) not in merged_cache:
+            ranges = merged_cache.get(row)
+            if ranges:
+                for min_col, max_col, value in ranges:
+                    if min_col <= col <= max_col:
+                        return value
         return merged_cache.get((row, col), ws.cell(row=row, column=col).value)
     try:
         for rng in ws.merged_cells.ranges:
@@ -148,7 +193,7 @@ def load_sheet_rows_full(ws, max_col=None, use_cache=False):
     # 仅在存在合并单元格时补齐区域左上角值；大文件无合并时跳过这轮全表扫描。
     if has_merged_cells(ws):
         try:
-            merged_cache = build_merged_cells_cache(ws) if use_cache else None
+            merged_cache = build_merged_cells_row_index(ws) if use_cache else None
             for i in range(len(rows)):
                 for col in range(max_col):
                     cur = rows[i][col]
@@ -363,7 +408,13 @@ def load_sheet_header(ws, max_col=None):
         return []
     if max_col is None:
         max_col = ws.max_column or 1
-    row = next(ws.iter_rows(min_row=1, max_row=1, max_col=max_col, values_only=True), None)
+    iterator = ws.iter_rows(min_row=1, max_row=1, max_col=max_col, values_only=True)
+    try:
+        row = next(iterator, None)
+    finally:
+        close = getattr(iterator, "close", None)
+        if close:
+            close()
     if not row:
         return []
     return [cell_str(c) for c in row]
@@ -414,7 +465,7 @@ def get_column_values(ws, col_index_1based, max_row=None, use_cache=False, merge
         max_row = ws.max_row or 1
     has_merged = has_merged_cells(ws)
     if merged_cache is None and use_cache and has_merged:
-        merged_cache = build_merged_cells_cache(ws)
+        merged_cache = build_merged_cells_row_index(ws)
     if merged_cache is None and not has_merged:
         return [
             cell_str(ws.cell(row=r, column=col_index_1based).value)

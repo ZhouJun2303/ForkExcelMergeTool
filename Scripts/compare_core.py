@@ -5,10 +5,12 @@
 """
 
 import os
+import argparse
 import subprocess
 import sys
 
 import openpyxl
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import PatternFill
 
 from config import COMPARE_SUFFIX
@@ -23,7 +25,7 @@ from excel_io import (
 from log_util import log
 
 
-def get_compare_data(path_a, path_b, include_same=True):
+def get_compare_data(path_a, path_b, include_same=False):
     """
     计算 A、B 两个 Excel 的差异。
     返回 (path_out, sheet_names, diff_rows)：
@@ -37,8 +39,8 @@ def get_compare_data(path_a, path_b, include_same=True):
     base_name = os.path.splitext(os.path.basename(path_a))[0]
     path_out = os.path.join(out_dir, base_name + COMPARE_SUFFIX + ".xlsx")
 
-    wb_a = openpyxl.load_workbook(path_a, data_only=True, read_only=True)
-    wb_b = openpyxl.load_workbook(path_b, data_only=True, read_only=True)
+    wb_a = openpyxl.load_workbook(path_a, data_only=False, read_only=True)
+    wb_b = openpyxl.load_workbook(path_b, data_only=False, read_only=True)
 
     seen = set()
     sheet_names = []
@@ -126,29 +128,23 @@ def write_compare_excel(path_out, sheet_names, diff_rows, open_file=False):
     red_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
     yellow_fill = PatternFill(start_color="FFFF99", end_color="FFFF99", fill_type="solid")
 
-    wb_out = openpyxl.Workbook()
-    wb_out.remove(wb_out.active)
-    row_idx = {}
+    wb_out = openpyxl.Workbook(write_only=True)
+    sheets = {}
     for sheet_name in sheet_names:
         ws_out = wb_out.create_sheet(sheet_name[:31])
-        ws_out.cell(row=1, column=1, value="[Key]")
-        ws_out.cell(row=1, column=2, value="[A-LEFT]")
-        ws_out.cell(row=1, column=3, value="[B-RIGHT]")
-        ws_out.cell(row=1, column=4, value="[Status]")
-        row_idx[sheet_name] = 2
+        ws_out.append(["[Key]", "[A-LEFT]", "[B-RIGHT]", "[Status]"])
+        sheets[sheet_name] = ws_out
 
     for sheet_name, key, status, str_a, str_b in diff_rows:
-        ws_out = wb_out[sheet_name[:31]]
-        r = row_idx[sheet_name]
-        ws_out.cell(row=r, column=1, value=key)
-        ws_out.cell(row=r, column=2, value=str_a)
-        ws_out.cell(row=r, column=3, value=str_b)
-        ws_out.cell(row=r, column=4, value=status)
+        ws_out = sheets[sheet_name]
         fill = green_fill if status in ("新增行", "新增列") else (red_fill if status in ("删除行", "删除列") else (yellow_fill if status == "修改" else None))
-        if fill:
-            for col in range(1, 5):
-                ws_out.cell(row=r, column=col).fill = fill
-        row_idx[sheet_name] = r + 1
+        cells = []
+        for value in (key, str_a, str_b, status):
+            cell = WriteOnlyCell(ws_out, value=value)
+            if fill:
+                cell.fill = fill
+            cells.append(cell)
+        ws_out.append(cells)
 
     wb_out.save(path_out)
     wb_out.close()
@@ -166,12 +162,12 @@ def write_compare_excel(path_out, sheet_names, diff_rows, open_file=False):
     return 0
 
 
-def do_compare(path_a, path_b, open_file=True):
+def do_compare(path_a, path_b, open_file=True, include_same=False):
     """
     二向对比：生成对比 Excel 并可选打开。
     返回 0 成功，2 异常（如缺 openpyxl 或 get_compare_data 失败）。
     """
-    result = get_compare_data(path_a, path_b)
+    result = get_compare_data(path_a, path_b, include_same=include_same)
     if result[0] is None:
         return 2
     path_out, sheet_names, diff_rows = result
@@ -180,3 +176,16 @@ def do_compare(path_a, path_b, open_file=True):
 
     print("OK: 对比已生成 %s" % path_out, file=sys.stdout)
     return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Compare two Excel files.")
+    parser.add_argument("path_a")
+    parser.add_argument("path_b")
+    parser.add_argument("--include-same", action="store_true", help="输出相同行（默认只输出差异）")
+    args = parser.parse_args(argv)
+    return do_compare(args.path_a, args.path_b, include_same=args.include_same)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -6,6 +6,7 @@
 
 import os
 import sys
+import json
 from datetime import datetime
 
 from config import LOG_FILE, MERGE_OPTIONS_FILE
@@ -40,6 +41,20 @@ def _is_pid_alive(pid):
         return False
 
 
+def _read_lock_pid(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read().strip()
+        if not text:
+            return None
+        if text.startswith("{"):
+            data = json.loads(text)
+            return int(data.get("pid"))
+        return int(text.splitlines()[0].strip())
+    except Exception:
+        return None
+
+
 def _try_acquire_lock(name):
     """原子方式创建锁文件；遇到僵尸锁会清理后重试。"""
     path = _lock_path(name)
@@ -47,16 +62,16 @@ def _try_acquire_lock(name):
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(str(os.getpid()))
+                json.dump({
+                    "pid": os.getpid(),
+                    "started_at": datetime.now().isoformat(timespec="seconds"),
+                    "mode": name,
+                }, f, ensure_ascii=False)
             return True
         except FileExistsError:
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    pid = int(f.read().strip())
-                if _is_pid_alive(pid):
-                    return False
-            except Exception:
-                pass
+            pid = _read_lock_pid(path)
+            if pid is not None and _is_pid_alive(pid):
+                return False
             try:
                 os.remove(path)
             except FileNotFoundError:
@@ -73,13 +88,9 @@ def _release_lock(name):
     try:
         if not os.path.isfile(path):
             return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                pid = int(f.read().strip())
-            if pid != os.getpid():
-                return
-        except Exception:
-            pass
+        pid = _read_lock_pid(path)
+        if pid is not None and pid != os.getpid():
+            return
         os.remove(path)
     except Exception:
         pass

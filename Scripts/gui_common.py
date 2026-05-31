@@ -15,11 +15,14 @@ from datetime import datetime
 from log_util import log_path, log
 from update_manager import (
     UpdateError,
+    cached_update_info,
     check_for_update,
     download_update,
     get_current_executable,
     launch_update_script,
     make_update_script,
+    remember_update_check,
+    should_auto_check_update,
 )
 
 
@@ -338,6 +341,7 @@ class UpdateButtonController:
         self.checking = False
         self.installing = False
         self.button.config(text=self.default_text, command=self.on_click)
+        self._apply_cached_info()
 
     def bind_progress_widgets(self, progress_bar, progress_var, progress_label=None, progress_container=None):
         self.progress_container = progress_container
@@ -347,6 +351,11 @@ class UpdateButtonController:
         self._set_progress_visible(False)
 
     def start_background_check(self):
+        cached = cached_update_info()
+        if cached and cached.get("available"):
+            self._set_check_result(cached, silent=True, from_cache=True)
+        if not should_auto_check_update():
+            return
         if self.checking:
             return
         self.checking = True
@@ -356,6 +365,7 @@ class UpdateButtonController:
         def worker():
             try:
                 info = check_for_update()
+                remember_update_check(info)
                 self.root.after(0, lambda: self._set_check_result(info, silent=True))
             except Exception as e:
                 self.root.after(0, lambda err=e: self._set_check_error(err, silent=True))
@@ -366,7 +376,10 @@ class UpdateButtonController:
         if self.installing:
             return
         if self.info and self.info.get("available"):
-            self._confirm_and_install(self.info)
+            if self.info.get("asset"):
+                self._confirm_and_install(self.info)
+            else:
+                self._manual_check()
             return
         self._manual_check()
 
@@ -381,21 +394,31 @@ class UpdateButtonController:
         def worker():
             try:
                 info = check_for_update()
+                remember_update_check(info)
                 self.root.after(0, lambda: self._set_check_result(info, silent=False))
             except Exception as e:
                 self.root.after(0, lambda err=e: self._set_check_error(err, silent=False))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _set_check_result(self, info, silent):
+    def _apply_cached_info(self):
+        info = cached_update_info()
+        if info and info.get("available"):
+            self.info = info
+            text = self.available_text or ("有新版本 v%s" % info.get("latest_version"))
+            self.button.config(text=text)
+
+    def _set_check_result(self, info, silent, from_cache=False):
         self.checking = False
         self.info = info
         self.button.config(state=tk.NORMAL)
-        self._set_progress_visible(False)
+        if not from_cache:
+            self._set_progress_visible(False)
         if info.get("available"):
             text = self.available_text or ("有新版本 v%s" % info.get("latest_version"))
             self.button.config(text=text)
-            gui_log("发现新版本 v%s，请点击按钮更新。" % info.get("latest_version"), self.status_var)
+            if not from_cache:
+                gui_log("发现新版本 v%s，请点击按钮更新。" % info.get("latest_version"), self.status_var)
             if not silent:
                 self._confirm_and_install(info)
             return

@@ -40,6 +40,7 @@ $scriptNames = @(
     "ExcelMergeGUI.py",
     "excel_io.py",
     "git_util.py",
+    "git_merge_driver.py",
     "gui_common.py",
     "log_util.py",
     "MergeExcelFork.py",

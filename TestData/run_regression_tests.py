@@ -40,7 +40,7 @@ def _write_xlsx(path, rows):
 
 
 def _rows(path):
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = openpyxl.load_workbook(path, data_only=False)
     ws = wb["Data"]
     values = [
         [ws.cell(row=r, column=c).value for c in range(1, ws.max_column + 1)]
@@ -78,6 +78,31 @@ def test_compare_opens_once(out_dir):
 
     _assert(code == 0, "compare should succeed")
     _assert(calls == [True], "do_compare should delegate opening exactly once")
+
+
+def test_compare_formula_changes(out_dir):
+    import compare_core
+
+    left = os.path.join(out_dir, "formula_left.xlsx")
+    right = os.path.join(out_dir, "formula_right.xlsx")
+    _write_xlsx(left, [["Key", "V"], ["a", "=1+1"]])
+    _write_xlsx(right, [["Key", "V"], ["a", "=1+2"]])
+
+    _, _, diff_rows = compare_core.get_compare_data(left, right)
+    statuses = [row[2] for row in diff_rows if row[1] == "a"]
+    _assert(statuses == ["修改"], "formula text changes should be reported")
+
+
+def test_key_normalization_edges(out_dir):
+    from excel_io import key_str_normalized
+
+    _assert(key_str_normalized("1.0") == "1", "1.0 should match 1")
+    _assert(key_str_normalized("001") == "001", "leading zero business IDs should be preserved")
+    _assert(
+        key_str_normalized("9007199254740993") == "9007199254740993",
+        "long integer keys should not lose precision",
+    )
+    _assert(key_str_normalized("1e309") == "1e309", "scientific overflow-like keys should stay textual")
 
 
 def test_backup_same_second(out_dir):
@@ -159,6 +184,130 @@ def test_delete_conflict_choices(out_dir):
     _assert(["gone", "local"] in rows, "local-kept row should be copied by key")
 
 
+def test_auto_single_side_modifications(out_dir):
+    from merge_core import do_merge
+
+    base = os.path.join(out_dir, "auto_base.xlsx")
+    local = os.path.join(out_dir, "auto_local.xlsx")
+    remote = os.path.join(out_dir, "auto_remote.xlsx")
+    merged = os.path.join(out_dir, "auto_merged.xlsx")
+    _write_xlsx(base, [["Key", "V"], ["local_only_change", "base"], ["remote_only_change", "base"], ["remote_deleted", "base"]])
+    _write_xlsx(local, [["Key", "V"], ["local_only_change", "local"], ["remote_only_change", "base"], ["remote_deleted", "base"]])
+    _write_xlsx(remote, [["Key", "V"], ["local_only_change", "base"], ["remote_only_change", "remote"]])
+
+    code = do_merge(
+        local, base, remote, merged,
+        options={"A", "B", "E", "G"},
+        backup_root=os.path.join(out_dir, "backup_auto"),
+    )
+    _assert(code == 0, "auto single-side merge should succeed")
+    rows = _rows(merged)
+    _assert(["local_only_change", "local"] in rows, "local-only modification should be preserved")
+    _assert(["remote_only_change", "remote"] in rows, "remote-only modification should be preserved")
+    keys = [row[0] for row in rows]
+    _assert("remote_deleted" not in keys, "single-side delete with other side unchanged should auto delete")
+
+
+def test_auto_single_side_cell_merge_preserves_new_columns(out_dir):
+    from merge_core import do_merge
+
+    base = os.path.join(out_dir, "auto_cell_base.xlsx")
+    local = os.path.join(out_dir, "auto_cell_local.xlsx")
+    remote = os.path.join(out_dir, "auto_cell_remote.xlsx")
+    merged = os.path.join(out_dir, "auto_cell_merged.xlsx")
+    _write_xlsx(base, [["Key", "Name"], ["k1", "base"]])
+    _write_xlsx(local, [["Key", "Name"], ["k1", "local"]])
+    _write_xlsx(remote, [["Key", "Name", "Price"], ["k1", "base", "9"]])
+
+    code = do_merge(
+        local, base, remote, merged,
+        options={"E", "G"},
+        backup_root=os.path.join(out_dir, "backup_auto_cell"),
+    )
+    _assert(code == 0, "auto cell-level merge should succeed")
+    rows = _rows(merged)
+    _assert(rows[0] == ["Key", "Name", "Price"], "new remote column should remain")
+    _assert(rows[1] == ["k1", "local", "9"], "local changed cell and remote new column should both survive")
+
+
+def test_mode_c_without_new_sheets_preserves_metadata(out_dir):
+    from merge_core import do_merge
+
+    local = os.path.join(out_dir, "metadata_local.xlsx")
+    remote = os.path.join(out_dir, "metadata_remote.xlsx")
+    merged = os.path.join(out_dir, "metadata_merged.xlsx")
+    _write_xlsx(local, [["Key", "V"], ["a", "1"]])
+    wb = openpyxl.load_workbook(local)
+    ws = wb["Data"]
+    ws.freeze_panes = "B2"
+    ws.auto_filter.ref = "A1:B2"
+    wb.save(local)
+    wb.close()
+    shutil.copy2(local, remote)
+
+    code = do_merge(
+        local, local, remote, merged,
+        mode="C",
+        backup_root=os.path.join(out_dir, "backup_metadata"),
+    )
+    _assert(code == 0, "mode C metadata preservation merge should succeed")
+    wb_m = openpyxl.load_workbook(merged)
+    ws_m = wb_m["Data"]
+    _assert(ws_m.freeze_panes == "B2", "freeze panes should be preserved when no sheet rebuild is needed")
+    _assert(ws_m.auto_filter.ref == "A1:B2", "auto filter should be preserved when no sheet rebuild is needed")
+    wb_m.close()
+
+
+def test_column_conflict_writes_by_header(out_dir):
+    from merge_core import do_merge
+
+    base = os.path.join(out_dir, "col_conflict_base.xlsx")
+    local = os.path.join(out_dir, "col_conflict_local.xlsx")
+    remote = os.path.join(out_dir, "col_conflict_remote.xlsx")
+    merged = os.path.join(out_dir, "col_conflict_merged.xlsx")
+    _write_xlsx(base, [["Key", "A", "B"], ["k1", "base_a", "base_b"]])
+    _write_xlsx(local, [["Key", "A", "B"], ["k1", "local_a", "base_b"]])
+    _write_xlsx(remote, [["Key", "B", "A"], ["k1", "base_b", "remote_a"]])
+
+    code = do_merge(
+        local, base, remote, merged,
+        mode="D",
+        d_choices=[{"sheet": "Data", "key": "A", "choice": "remote", "kind": "column"}],
+        backup_root=os.path.join(out_dir, "backup_col_conflict"),
+    )
+    _assert(code == 0, "column conflict merge should succeed")
+    rows = _rows(merged)
+    _assert(rows[0] == ["Key", "A", "B"], "target column order should remain stable")
+    _assert(rows[1] == ["k1", "remote_a", "base_b"], "remote column A should write into target A, not source index")
+
+
+def test_git_cleanup_policy_does_not_delete_repo_paths(out_dir):
+    from git_util import CleanupPolicy
+
+    repo_path = os.path.join(out_dir, "ForkTempProject")
+    os.makedirs(repo_path, exist_ok=True)
+    real_file = os.path.join(repo_path, "real.xlsx")
+    _write_xlsx(real_file, [["Key", "V"], ["a", "1"]])
+    policy = CleanupPolicy.default()
+    _assert(not policy.allows(real_file), "repo path containing fork/temp words must not be treated as temp")
+
+
+def test_git_driver_completion_strategy_writes_target(out_dir):
+    from git_merge_driver import GitDriverCompletionStrategy
+
+    target = os.path.join(out_dir, "driver_target.xlsx")
+    merged = os.path.join(out_dir, "driver_merged.xlsx")
+    _write_xlsx(target, [["Key", "V"], ["a", "old"]])
+    _write_xlsx(merged, [["Key", "V"], ["a", "new"]])
+
+    strategy = GitDriverCompletionStrategy(target, merged)
+    result = strategy.complete(None)
+    _assert(result.success, "driver completion should succeed")
+    _assert(strategy.completed, "driver strategy should record completed state")
+    rows = _rows(target)
+    _assert(["a", "new"] in rows, "driver completion should replace %A with merged result")
+
+
 def test_multi_new_columns(out_dir):
     from merge_core import do_merge
 
@@ -222,8 +371,16 @@ def main():
     _, out_dir = _setup_paths()
     tests = [
         test_compare_opens_once,
+        test_compare_formula_changes,
+        test_key_normalization_edges,
         test_backup_same_second,
         test_delete_conflict_choices,
+        test_auto_single_side_modifications,
+        test_auto_single_side_cell_merge_preserves_new_columns,
+        test_mode_c_without_new_sheets_preserves_metadata,
+        test_column_conflict_writes_by_header,
+        test_git_cleanup_policy_does_not_delete_repo_paths,
+        test_git_driver_completion_strategy_writes_target,
         test_multi_new_columns,
         test_performance_smoke,
     ]

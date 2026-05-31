@@ -28,3 +28,8 @@ GITHUB_REPO = "ZhouJun2303/ForkExcelMergeTool"
 UPDATE_ASSET_NAME = "ExcelMergeFork.exe"
 UPDATE_SHA256_ASSET_NAME = "ExcelMergeFork.exe.sha256"
 UPDATE_CHECK_TIMEOUT = 8
+UPDATE_CHECK_INTERVAL_SECONDS = 7 * 24 * 60 * 60
+UPDATE_STATE_FILE = "update_state.json"
+
+# 发布版本默认关闭业务 Key 诊断，避免合并完成后重新打开并扫描结果文件。
+ENABLE_MERGE_KEY_DIAGNOSTICS = False

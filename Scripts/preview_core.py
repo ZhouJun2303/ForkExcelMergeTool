@@ -10,6 +10,7 @@ import time
 import openpyxl
 
 from conflict import compute_conflicts
+from conflict import compute_auto_row_actions
 from excel_io import (
     get_sheet_names,
     header_normalize_for_compare,
@@ -109,6 +110,9 @@ def build_merge_preview(path_local, path_base_file, path_remote, options, base_s
     if "G" in options:
         _append_conflict_preview_items(
             path_local, path_base_file, path_remote, items_to_insert, conflict_entries, summary
+        )
+        _append_auto_action_preview_items(
+            path_local, path_base_file, path_remote, items_to_insert, summary
         )
 
     elapsed_ms = int((time.time() - started) * 1000)
@@ -237,4 +241,25 @@ def _append_conflict_preview_items(path_local, path_base_file, path_remote, item
         else:
             choice_text = "信息：本地新增" if conflict_type == "add_local" else "信息：线上新增"
             items_to_insert.append((c["sheet"], "%s (%s)" % (c["key"], suffix), choice_text, tag))
+            summary["info"] += 1
+
+
+def _append_auto_action_preview_items(path_local, path_base_file, path_remote, items_to_insert, summary):
+    labels = {
+        "take_local": ("自动采用本地修改", "mod"),
+        "take_remote": ("自动采用线上修改", "mod"),
+        "delete_local": ("自动删除（本地已删，线上未改）", "del"),
+        "delete_remote": ("自动删除（线上已删，本地未改）", "del"),
+    }
+    seen = set((item[0], str(item[1]).split(" (", 1)[0], item[2]) for item in items_to_insert)
+    for action in compute_auto_row_actions(path_local, path_base_file, path_remote):
+        label, tag = labels.get(action.get("type"), ("自动合并", "info"))
+        key = (action.get("sheet"), action.get("key"), label)
+        if key in seen:
+            continue
+        seen.add(key)
+        items_to_insert.append((action.get("sheet"), action.get("key"), label, tag))
+        if tag == "del":
+            summary["delete"] += 1
+        else:
             summary["info"] += 1

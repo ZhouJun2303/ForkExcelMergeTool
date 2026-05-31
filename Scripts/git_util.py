@@ -8,16 +8,77 @@ Git 相关操作：解决冲突后标记已解决、清理临时文件与备份�
 
 import os
 import subprocess
+import tempfile
+from dataclasses import dataclass, field
 
 from config import BACKUP_SUBDIR
 from log_util import log
 
 
-def stage_merged_and_cleanup(path_merged, path_local, path_base, path_remote, log_callback=None):
+@dataclass
+class CompletionResult:
+    """合并确认动作的结构化结果。"""
+
+    success: bool = False
+    staged: bool = False
+    cleaned: list = field(default_factory=list)
+    skipped: list = field(default_factory=list)
+    errors: list = field(default_factory=list)
+
+
+class CleanupPolicy:
+    """只允许清理显式登记目录下的临时文件。"""
+
+    def __init__(self, allowed_roots=None):
+        roots = []
+        for root in allowed_roots or []:
+            if not root:
+                continue
+            try:
+                root_abs = os.path.abspath(root)
+                if os.path.isdir(root_abs):
+                    roots.append(os.path.normcase(root_abs))
+            except Exception:
+                pass
+        seen = set()
+        self.allowed_roots = []
+        for root in roots:
+            if root not in seen:
+                seen.add(root)
+                self.allowed_roots.append(root)
+
+    @classmethod
+    def default(cls):
+        roots = [tempfile.gettempdir(), os.environ.get("TEMP"), os.environ.get("TMP")]
+        return cls(roots)
+
+    def allows(self, path):
+        if not path or not os.path.isfile(path):
+            return False
+        try:
+            abs_path = os.path.normcase(os.path.abspath(path))
+            for root in self.allowed_roots:
+                if os.path.commonpath([root, abs_path]) == root:
+                    return True
+        except (OSError, ValueError):
+            return False
+        return False
+
+
+def _path_inside(path, root):
+    try:
+        abs_path = os.path.normcase(os.path.abspath(path))
+        abs_root = os.path.normcase(os.path.abspath(root))
+        return os.path.commonpath([abs_root, abs_path]) == abs_root
+    except (OSError, ValueError):
+        return False
+
+
+def stage_merged_and_cleanup(path_merged, path_local, path_base, path_remote, log_callback=None, cleanup_policy=None):
     """
     解决冲突后：
     1) 对合并文件执行 git add，使 Fork 识别为已解决；
-    2) 删除 LOCAL/BASE/REMOTE 中的临时文件（路径含 temp/tmp/fork/appdata 等）；
+    2) 只删除显式允许临时根目录内的 LOCAL/BASE/REMOTE 文件；
     3) 删除 MERGED 所在目录下 MergeExcelBackup 中当前文件的 _local/_remote/_merged 备份，
        并从 git 索引移除（若在仓库内）。
     log_callback(msg, is_error=False) 可选，用于 GUI 状态栏等。
@@ -30,6 +91,7 @@ def stage_merged_and_cleanup(path_merged, path_local, path_base, path_remote, lo
             except Exception:
                 pass
 
+    result = CompletionResult()
     work_dir = os.path.dirname(os.path.abspath(path_merged))
     if not work_dir:
         work_dir = "."
@@ -42,42 +104,64 @@ def stage_merged_and_cleanup(path_merged, path_local, path_base, path_remote, lo
             text=True,
             timeout=5,
         )
-        repo_root = rr.stdout.strip() if rr.returncode == 0 and rr.stdout else work_dir
-    except Exception:
-        repo_root = work_dir
+        if rr.returncode != 0 or not rr.stdout.strip():
+            msg = "git rev-parse 失败，无法确认仓库根目录: %s" % (rr.stderr or rr.stdout or "未知")
+            result.errors.append(msg)
+            _log_cb(msg, True)
+            return result
+        repo_root = os.path.abspath(rr.stdout.strip())
+    except Exception as e:
+        msg = "无法执行 git rev-parse: %s" % e
+        result.errors.append(msg)
+        _log_cb(msg, True)
+        return result
+
+    if not _path_inside(abs_merged, repo_root):
+        msg = "MERGED 不在当前 Git 仓库中，已停止确认流程: %s" % abs_merged
+        result.errors.append(msg)
+        _log_cb(msg, True)
+        return result
 
     rel_path = os.path.relpath(abs_merged, repo_root).replace("\\", "/")
-    if rel_path.startswith(".."):
-        rel_path = os.path.basename(path_merged)
 
     try:
         r = subprocess.run(
-            ["git", "add", rel_path],
+            ["git", "add", "--", rel_path],
             cwd=repo_root,
             capture_output=True,
             text=True,
             timeout=10,
         )
         if r.returncode == 0:
+            result.staged = True
             _log_cb("已执行 git add，冲突已标记为已解决")
         else:
-            _log_cb("git add 失败: %s" % (r.stderr or r.stdout or "未知"), is_err=True)
+            msg = "git add 失败: %s" % (r.stderr or r.stdout or "未知")
+            result.errors.append(msg)
+            _log_cb(msg, is_err=True)
+            return result
     except Exception as e:
-        _log_cb("git add 异常: %s" % e, is_err=True)
+        msg = "git add 异常: %s" % e
+        result.errors.append(msg)
+        _log_cb(msg, is_err=True)
+        return result
 
-    def _is_temp(p):
-        if not p or not os.path.isfile(p):
-            return False
-        pn = p.lower()
-        return "temp" in pn or "tmp" in pn or "fork" in pn or "appdata" in pn
-
+    cleanup_policy = cleanup_policy or CleanupPolicy.default()
     for label, p in [("LOCAL", path_local), ("BASE", path_base), ("REMOTE", path_remote)]:
-        if _is_temp(p):
+        if not p or not os.path.isfile(p):
+            continue
+        if cleanup_policy.allows(p):
             try:
                 os.remove(p)
+                result.cleaned.append(p)
                 _log_cb("已清理临时文件 %s: %s" % (label, p))
             except Exception as e:
-                _log_cb("清理 %s 失败: %s" % (label, e), is_err=True)
+                msg = "清理 %s 失败: %s" % (label, e)
+                result.errors.append(msg)
+                _log_cb(msg, is_err=True)
+        else:
+            result.skipped.append(p)
+            _log_cb("跳过清理 %s：路径不在允许的临时目录内 %s" % (label, p))
 
     merged_dir = os.path.dirname(os.path.abspath(path_merged))
     base_name = os.path.splitext(os.path.basename(path_merged))[0]
@@ -88,25 +172,39 @@ def stage_merged_and_cleanup(path_merged, path_local, path_base, path_remote, lo
             continue
         bp_rel = os.path.relpath(bp, repo_root).replace("\\", "/")
         try:
-            r = subprocess.run(["git", "rm", "-f", bp_rel], cwd=repo_root, capture_output=True, text=True, timeout=5)
-            if r.returncode == 0:
-                _log_cb("已删除备份(含从 git 移除): %s" % bp)
+            if _path_inside(bp, repo_root):
+                r = subprocess.run(["git", "rm", "-f", "--", bp_rel], cwd=repo_root, capture_output=True, text=True, timeout=5)
+                if r.returncode == 0:
+                    result.cleaned.append(bp)
+                    _log_cb("已删除备份(含从 git 移除): %s" % bp)
+                else:
+                    os.remove(bp)
+                    result.cleaned.append(bp)
+                    _log_cb("已删除备份: %s" % bp)
             else:
                 os.remove(bp)
+                result.cleaned.append(bp)
                 _log_cb("已删除备份: %s" % bp)
         except Exception as e:
             try:
                 os.remove(bp)
+                result.cleaned.append(bp)
                 _log_cb("已删除备份: %s" % bp)
             except Exception as e2:
-                _log_cb("删除备份失败 %s: %s" % (bp, e2), is_err=True)
+                msg = "删除备份失败 %s: %s" % (bp, e2)
+                result.errors.append(msg)
+                _log_cb(msg, is_err=True)
 
     if os.path.isdir(backup_dir) and not os.listdir(backup_dir):
         try:
             os.rmdir(backup_dir)
+            result.cleaned.append(backup_dir)
             _log_cb("已删除空备份目录: %s" % backup_dir)
         except Exception:
             pass
+
+    result.success = result.staged and not result.errors
+    return result
 
 
 def get_git_merge_info(path_merged):

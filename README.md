@@ -29,13 +29,27 @@ Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Too
 
 ### 2.1 更新方式
 
-工具会在合并/对比窗口后台检查 GitHub Releases。检查到新版本时，界面上的「检查更新」按钮会变成「有新版本 vX.Y」。
+工具会在合并/对比窗口后台检查 GitHub Releases，自动检查最多每 7 天一次；也可以随时点击「更新」按钮手动刷新。检查到新版本时，按钮会变成「新版」/「有新版本 vX.Y」作为标识。
 
 - 不会自动下载或替换，必须由用户点击按钮并确认后才更新。
 - 检查和下载期间按钮会禁用，窗口会显示更新状态；下载时有进度条，无法读取总大小时显示滚动进度。
 - 更新时会下载最新版 `ExcelMergeFork.exe`，如果 Release 里带有 `ExcelMergeFork.exe.sha256` 会自动校验。
 - Windows 正在运行的 exe 不能直接覆盖，所以工具会在你确认后关闭当前窗口，随后原地替换 exe。
 - 如果当前是 Python 脚本运行模式，只会提示更新，不会覆盖源码。
+
+### 2.2 全局 Git 合并驱动（可选）
+
+除了 Fork 外，也可以安装全局 Git merge driver，让普通 `git merge` 在遇到 `.xlsx` 文件级合并时调用本工具：
+
+```text
+install_git_integration.bat
+```
+
+这会写入用户级 Git 配置和 attributes，只匹配 `*.xlsx` / `*.XLSX`。driver 模式确认后只把结果写回 Git 传入的 `%A`，不会执行 `git add`，也不会删除 Git 管理的临时文件。卸载：
+
+```text
+uninstall_git_integration.bat
+```
 
 ---
 
@@ -151,6 +165,14 @@ python Scripts\MergeExcelFork.py <线上文件REMOTE> <本地文件LOCAL>
 
 会在本地文件同目录生成 `{本地文件名}_compare.xlsx` 并自动打开。
 
+**Git merge driver（由 Git 自动调用）：**
+
+```text
+ExcelMergeFork.exe --git-merge-driver <base> <current> <other> <repo-path>
+```
+
+这是给 Git 配置使用的底层入口，不需要手动日常调用。
+
 ---
 
 ## 七、常见问题
@@ -242,6 +264,7 @@ python Scripts\MergeExcelFork.py <线上文件REMOTE> <本地文件LOCAL>
 | **Scripts/merge_core.py** | 三向合并核心：无 GUI 时的合并与备份（命令行回退用） |
 | **Scripts/compare_core.py** | 二向对比核心：计算差异、生成对比 Excel |
 | **Scripts/git_util.py** | Git 操作：冲突解决后 git add、清理临时文件、兼容清理旧版扁平备份、获取提交信息 |
+| **Scripts/git_merge_driver.py** | Git 底层 merge driver 适配：隔离临时目录、GUI 确认后原子写回 `%A` |
 | **Scripts/conflict.py** | 冲突检测：三份 Excel 比较得到冲突项与每 Sheet 数据（供合并 GUI） |
 | **Scripts/gui_common.py** | GUI 公共：日志到状态栏、颜色图例、打开文件、统一样式 |
 | **Scripts/merge_gui.py** | 合并窗口：冲突列表、生成合并结果（以本地为底）、确认并解决冲突 |

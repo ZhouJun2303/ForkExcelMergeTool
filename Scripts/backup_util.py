@@ -133,25 +133,26 @@ def _backup_file_name(path_merged, suffix):
     return (base_name or "merged") + suffix + (ext or ".xlsx")
 
 
-def create_merge_backup(path_local, path_remote, path_merged, backup_root=None, timestamp=None):
+def create_merge_backup(path_local, path_remote, path_merged, backup_root=None, timestamp=None, context_path=None):
     """
     创建一次完整合并备份，目录结构：
     备份根目录 / 项目名 / 时间戳 / {合并文件名}_{local|remote|merged}.xlsx
     """
-    project_parent = backup_project_parent(path_merged, backup_root)
+    context_path = context_path or path_merged
+    project_parent = backup_project_parent(context_path, backup_root)
     backup_dir, used_timestamp = _create_unique_backup_dir(project_parent, timestamp)
 
     paths = {
-        "local": os.path.join(backup_dir, _backup_file_name(path_merged, "_local")),
-        "remote": os.path.join(backup_dir, _backup_file_name(path_merged, "_remote")),
-        "merged": os.path.join(backup_dir, _backup_file_name(path_merged, "_merged")),
+        "local": os.path.join(backup_dir, _backup_file_name(context_path, "_local")),
+        "remote": os.path.join(backup_dir, _backup_file_name(context_path, "_remote")),
+        "merged": os.path.join(backup_dir, _backup_file_name(context_path, "_merged")),
     }
     shutil.copy2(path_local, paths["local"])
     shutil.copy2(path_remote, paths["remote"])
     shutil.copy2(path_merged, paths["merged"])
     return {
-        "root": resolve_backup_root(path_merged, backup_root),
-        "project": project_name_for_backup(path_merged),
+        "root": resolve_backup_root(context_path, backup_root),
+        "project": project_name_for_backup(context_path),
         "time": used_timestamp,
         "dir": backup_dir,
         "local": paths["local"],
