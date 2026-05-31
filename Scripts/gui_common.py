@@ -263,14 +263,17 @@ def make_header_icon(parent, root, style_name="Icon.TLabel"):
     return label
 
 
-def make_update_card(parent, root):
+def make_update_card(parent, root, include_button=True):
     """创建现代化更新状态卡片，返回 controller 需要绑定的控件。"""
     card = ttk.Frame(parent, padding=(10, 8), style="UpdateCard.TFrame")
     title_row = ttk.Frame(card, style="UpdateCard.TFrame")
     title_row.pack(fill=tk.X)
-    ttk.Label(title_row, text="程序更新", style="UpdateTitle.TLabel").pack(side=tk.LEFT)
-    btn_update = ttk.Button(title_row, text="检查更新", style="Tool.TButton")
-    btn_update.pack(side=tk.RIGHT)
+    title_text = "程序更新" if include_button else "更新状态"
+    ttk.Label(title_row, text=title_text, style="UpdateTitle.TLabel").pack(side=tk.LEFT)
+    btn_update = None
+    if include_button:
+        btn_update = ttk.Button(title_row, text="手动检查更新", style="Tool.TButton")
+        btn_update.pack(side=tk.RIGHT)
     state_var = tk.StringVar(root, value="")
     state_row = ttk.Frame(card, style="UpdateCard.TFrame")
     state_row.pack(fill=tk.X, pady=(5, 0))
@@ -569,7 +572,7 @@ class UpdateButtonController:
         self.status_var = status_var
         self.on_quit = on_quit
         self.compact = compact
-        self.default_text = "检查更新"
+        self.default_text = "手动检查更新"
         self.checking_text = "检查中..."
         self.available_text = None
         self.downloading_text = "下载中..."

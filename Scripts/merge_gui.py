@@ -227,8 +227,11 @@ class MergeWindow:
         title_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
         headline = ttk.Frame(title_text, style="App.TFrame")
         headline.pack(fill=tk.X)
-        ttk.Label(headline, text="Excel 三向合并", style="Title.TLabel").pack(side=tk.LEFT)
+        ttk.Label(headline, text="Excel 多模式合并", style="Title.TLabel").pack(side=tk.LEFT)
         make_badge(headline, "v%s" % APP_VERSION, "primary").pack(side=tk.LEFT, padx=(10, 0))
+        self.btn_update = make_icon_button(headline, self.root, "手动检查更新", "update", style="Tiny.TButton")
+        self.btn_update.pack(side=tk.LEFT, padx=(8, 0))
+        ToolTip(self.btn_update, "手动检查 GitHub Release 是否有新版本；exe 运行模式支持自动下载替换。")
         ttk.Label(
             title_text,
             text="预览 BASE / LOCAL / REMOTE 差异，选择规则后生成 Fork 可接收的合并结果。",
@@ -369,7 +372,7 @@ class MergeWindow:
         make_separator(left_panel).pack(fill=tk.X, pady=12)
         (
             update_card,
-            self.btn_update,
+            _update_card_button,
             self.update_state_var,
             self.update_state_label,
             self.update_state_icon,
@@ -377,9 +380,8 @@ class MergeWindow:
             self.update_progress_var,
             self.update_progress_label,
             self.update_progress_bar,
-        ) = make_update_card(left_panel, self.root)
+        ) = make_update_card(left_panel, self.root, include_button=False)
         update_card.pack(fill=tk.X)
-        ToolTip(self.btn_update, "检查 GitHub Release 是否有新版本；exe 运行模式支持自动下载替换。")
 
         preview_top = ttk.Frame(right_panel, style="Panel.TFrame")
         preview_top.pack(fill=tk.X)

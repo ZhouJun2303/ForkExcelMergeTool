@@ -308,13 +308,16 @@ class DiffWindow:
         self.title_var = tk.StringVar(self.root, value="本地 (A) vs 线上 (B)")
         ttk.Label(headline, textvariable=self.title_var, style="PanelTitle.TLabel").pack(side=tk.LEFT)
         make_badge(headline, "v%s" % APP_VERSION, "primary").pack(side=tk.LEFT, padx=(10, 0))
+        self.btn_update = make_icon_button(headline, self.root, "手动检查更新", "update", style="Tiny.TButton")
+        self.btn_update.pack(side=tk.LEFT, padx=(8, 0))
+        ToolTip(self.btn_update, "手动检查 GitHub Release 是否有新版本；exe 运行模式支持自动下载替换。")
         ttk.Label(title_text, text="快速查看两个 Excel 的新增、删除和修改，并导出对比工作簿。", style="Muted.TLabel").pack(anchor=tk.W, pady=(2, 0))
         self.btn_swap = make_icon_button(title_row, self.root, "互换基准", "swap", command=self._on_swap_baseline, style="Secondary.TButton")
         self.btn_swap.pack(side=tk.LEFT, padx=(16, 10))
         ToolTip(self.btn_swap, "交换 A/B 基准并重新计算差异。")
         (
             update_card,
-            self.btn_update,
+            _update_card_button,
             self.update_state_var,
             self.update_state_label,
             self.update_state_icon,
@@ -322,9 +325,8 @@ class DiffWindow:
             self.update_progress_var,
             self.update_progress_label,
             self.update_progress_bar,
-        ) = make_update_card(title_row, self.root)
+        ) = make_update_card(title_row, self.root, include_button=False)
         update_card.pack(side=tk.RIGHT, fill=tk.Y)
-        ToolTip(self.btn_update, "检查 GitHub Release 是否有新版本；exe 运行模式支持自动下载替换。")
         self.update_controller = UpdateButtonController(
             self.root, self.btn_update, status_var=self.status_var, on_quit=self._on_close, compact=True,
         )
