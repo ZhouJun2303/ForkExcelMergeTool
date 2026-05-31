@@ -401,18 +401,21 @@ def merge_ordered_with_new_cols(base_ordered_cols, new_ordered_cols):
     return merge_ordered_with_new_rows(base_ordered_cols, new_ordered_cols)
 
 
-def get_column_values(ws, col_index_1based, max_row=None, use_cache=False):
+def get_column_values(ws, col_index_1based, max_row=None, use_cache=False, merged_cache=None):
     """
     读取 Sheet 中某一列的所有单元格值（从第 1 行到 max_row）。
     合并单元格取区域左上角值。col_index_1based 为 1-based 列号。
     use_cache=True 时构建合并单元格缓存以加速大文件加载。
+    merged_cache 可由调用方传入，避免同一 Sheet 多列读取时重复构建缓存。
     """
     if ws is None:
         return []
     if max_row is None:
         max_row = ws.max_row or 1
-    merged_cache = build_merged_cells_cache(ws) if use_cache and has_merged_cells(ws) else None
-    if merged_cache is None and not has_merged_cells(ws):
+    has_merged = has_merged_cells(ws)
+    if merged_cache is None and use_cache and has_merged:
+        merged_cache = build_merged_cells_cache(ws)
+    if merged_cache is None and not has_merged:
         return [
             cell_str(ws.cell(row=r, column=col_index_1based).value)
             for r in range(1, max_row + 1)

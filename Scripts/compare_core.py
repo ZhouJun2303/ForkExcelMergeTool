@@ -178,16 +178,5 @@ def do_compare(path_a, path_b, open_file=True):
     log("对比模式 输出: %s" % path_out)
     write_compare_excel(path_out, sheet_names, diff_rows, open_file=open_file)
 
-    if open_file:
-        try:
-            if sys.platform == "win32":
-                os.startfile(path_out)
-            elif sys.platform == "darwin":
-                subprocess.run(["open", path_out], check=False)
-            else:
-                subprocess.run(["xdg-open", path_out], check=False)
-        except Exception:
-            pass
-
     print("OK: 对比已生成 %s" % path_out, file=sys.stdout)
     return 0

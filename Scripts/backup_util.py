@@ -105,18 +105,27 @@ def backup_project_parent(path_merged, backup_root=None):
     return os.path.join(root, project_name_for_backup(path_merged))
 
 
-def _unique_backup_dir(project_parent, timestamp=None):
+def _create_unique_backup_dir(project_parent, timestamp=None):
+    """
+    创建唯一备份目录。存在检查和 mkdir 之间可能有并发竞态，
+    所以实际创建失败时继续尝试下一个后缀。
+    """
+    os.makedirs(project_parent, exist_ok=True)
     ts = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_dir = os.path.join(project_parent, ts)
-    if not os.path.exists(backup_dir):
-        return backup_dir, ts
-    for i in range(2, 1000):
-        ts_i = "%s_%02d" % (ts, i)
-        backup_dir = os.path.join(project_parent, ts_i)
-        if not os.path.exists(backup_dir):
-            return backup_dir, ts_i
-    ts_i = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    return os.path.join(project_parent, ts_i), ts_i
+    candidates = [ts]
+    candidates.extend("%s_%02d" % (ts, i) for i in range(2, 1000))
+    candidates.append(datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
+
+    for used_timestamp in candidates:
+        backup_dir = os.path.join(project_parent, used_timestamp)
+        try:
+            os.makedirs(backup_dir, exist_ok=False)
+            return backup_dir, used_timestamp
+        except FileExistsError:
+            continue
+    backup_dir = os.path.join(project_parent, datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
+    os.makedirs(backup_dir, exist_ok=False)
+    return backup_dir, os.path.basename(backup_dir)
 
 
 def _backup_file_name(path_merged, suffix):
@@ -130,8 +139,7 @@ def create_merge_backup(path_local, path_remote, path_merged, backup_root=None, 
     备份根目录 / 项目名 / 时间戳 / {合并文件名}_{local|remote|merged}.xlsx
     """
     project_parent = backup_project_parent(path_merged, backup_root)
-    backup_dir, used_timestamp = _unique_backup_dir(project_parent, timestamp)
-    os.makedirs(backup_dir, exist_ok=False)
+    backup_dir, used_timestamp = _create_unique_backup_dir(project_parent, timestamp)
 
     paths = {
         "local": os.path.join(backup_dir, _backup_file_name(path_merged, "_local")),

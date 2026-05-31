@@ -16,10 +16,12 @@ from openpyxl.utils import get_column_letter
 
 from backup_util import create_merge_backup
 from excel_io import (
+    build_merged_cells_cache,
     cell_str,
     get_merged_cell_value,
     get_sheet_names,
     get_column_values,
+    has_merged_cells,
     header_normalize_for_compare,
     key_str_normalized,
     load_sheet_header,
@@ -90,11 +92,11 @@ def _copy_row_with_style(ws_src, ws_dst, row_src, row_dst, max_col):
         ws_dst.row_dimensions[row_dst].height = ws_src.row_dimensions[row_src].height
 
 
-def _copy_col_with_style(ws_src, ws_dst, col_src, col_dst, max_row):
+def _copy_col_with_style(ws_src, ws_dst, col_src, col_dst, max_row, merged_cache=None):
     """将 ws_src 的 col_src 列（值+样式）复制到 ws_dst 的 col_dst 列。合并格取区域左上角值。"""
     for r in range(1, max_row + 1):
         src_c = ws_src.cell(row=r, column=col_src)
-        val = get_merged_cell_value(ws_src, r, col_src)
+        val = get_merged_cell_value(ws_src, r, col_src, merged_cache)
         dst_c = ws_dst.cell(row=r, column=col_dst, value=val)
         _copy_cell_style(src_c, dst_c)
     letter_src = get_column_letter(col_src)
@@ -171,6 +173,56 @@ def _copy_col_merged_ranges_to(ws_src, col_src, ws_dst, col_dst):
                 )
     except Exception:
         pass
+
+
+def _row_key_to_index(ws, max_col):
+    """构建 D 模式用的 key->原始行号，兼容空 key / 重复 key 的 __row_N 规则。"""
+    rows, idx = load_sheet_rows_full(ws, max_col, use_cache=True) if ws else ([], [])
+    key_to_row = {}
+    seen = set()
+    for i, row in enumerate(rows):
+        if i >= len(idx):
+            break
+        raw = key_str_normalized(row[0]) if row else ""
+        key = raw or "__row_%d" % idx[i]
+        if key in seen:
+            key = "__row_%d" % idx[i]
+        seen.add(key)
+        key_to_row[key] = idx[i]
+    return key_to_row
+
+
+def _normalized_header_to_index(headers):
+    """构建规范化表头 -> 1-based 列号。重复表头保留第一次出现。"""
+    out = {}
+    for i, header in enumerate(headers):
+        key = key_str_normalized(header)
+        if key and key not in out:
+            out[key] = i + 1
+    return out
+
+
+def _compare_header_to_index(headers):
+    """构建 header_normalize_for_compare 规则下的表头索引。"""
+    out = {}
+    for i, header in enumerate(headers):
+        key = header_normalize_for_compare(header)
+        if key and key not in out:
+            out[key] = i + 1
+    return out
+
+
+def _column_values_by_index(ws, col_indices, max_row):
+    """一次性读取同一 Sheet 的多列，复用合并单元格缓存。"""
+    if ws is None:
+        return {}
+    merged_cache = build_merged_cells_cache(ws) if has_merged_cells(ws) else None
+    values = {}
+    for col_idx in sorted(set(i for i in col_indices if i)):
+        values[col_idx] = get_column_values(
+            ws, col_idx, max_row, merged_cache=merged_cache,
+        )
+    return values
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +368,17 @@ def _merge_mode_b_impl(path_base_side, path_other_side, path_merged, base_side):
             (ws_base.max_row or 1) if ws_base else 1,
             (ws_other.max_row or 1) if ws_other else 1,
         )
+        needed_base_cols = []
+        needed_other_cols = []
+        for col_key in merged_col_order:
+            idx_b = col_to_idx_base.get(col_key)
+            idx_o = col_to_idx_other.get(col_key)
+            if idx_o is not None and (idx_b is None or col_key in new_cols):
+                needed_other_cols.append(idx_o)
+            elif idx_b is not None:
+                needed_base_cols.append(idx_b)
+        base_col_values = _column_values_by_index(ws_base, needed_base_cols, max_row)
+        other_col_values = _column_values_by_index(ws_other, needed_other_cols, max_row)
         ws_out = wb_out.create_sheet(sheet_name)
         for c, col_key in enumerate(merged_col_order, start=1):
             is_new_col = col_key in new_cols
@@ -323,9 +386,9 @@ def _merge_mode_b_impl(path_base_side, path_other_side, path_merged, base_side):
             idx_o = col_to_idx_other.get(col_key)
             for r in range(1, max_row + 1):
                 if idx_o is not None and (idx_b is None or is_new_col):
-                    val = get_column_values(ws_other, idx_o, max_row)[r - 1] if ws_other else ""
+                    val = other_col_values.get(idx_o, [""] * max_row)[r - 1] if ws_other else ""
                 else:
-                    val = get_column_values(ws_base, idx_b, max_row)[r - 1] if ws_base and idx_b is not None else ""
+                    val = base_col_values.get(idx_b, [""] * max_row)[r - 1] if ws_base and idx_b is not None else ""
                 cell = ws_out.cell(row=r, column=c, value=val)
                 if is_new_col:
                     cell.font = font_new
@@ -435,43 +498,36 @@ def _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choice
         max_col = ws_out.max_column or 1
         max_row = ws_out.max_row or 1
         if kind == "row":
-            rows_l, idx_l = load_sheet_rows_full(ws_l, max_col, use_cache=True) if ws_l else ([], [])
-            rows_r, idx_r = load_sheet_rows_full(ws_r, max_col, use_cache=True) if ws_r else ([], [])
-            key_to_row_l = {}
-            key_to_row_r = {}
-            for i, r in enumerate(rows_l):
-                k = key_str_normalized(r[0]) if r else ""
-                if k:
-                    key_to_row_l[k] = idx_l[i] if i < len(idx_l) else i + 1
-            for i, r in enumerate(rows_r):
-                k = key_str_normalized(r[0]) if r else ""
-                if k:
-                    key_to_row_r[k] = idx_r[i] if i < len(idx_r) else i + 1
-            row_idx = key_to_row_l.get(key) or key_to_row_r.get(key)
-            if row_idx is None:
-                continue
+            key_norm = key_str_normalized(key) or key
+            key_to_row_out = _row_key_to_index(ws_out, max_col)
+            row_idx_out = key_to_row_out.get(key_norm)
             source = ws_r if choice == "remote" else ws_l
             if not source:
+                if row_idx_out is not None:
+                    ws_out.delete_rows(row_idx_out, 1)
                 continue
+            key_to_row_source = _row_key_to_index(source, max_col)
+            row_idx_source = key_to_row_source.get(key_norm)
+            if row_idx_source is None:
+                if row_idx_out is not None:
+                    ws_out.delete_rows(row_idx_out, 1)
+                continue
+            if row_idx_out is None:
+                row_idx_out = min(row_idx_source, (ws_out.max_row or 0) + 1)
+                ws_out.insert_rows(row_idx_out, 1)
+                _shift_merged_cells_after_insert_rows(ws_out, row_idx_out, 1)
             _font_mod = Font(color="CC6600")
             for c in range(1, max_col + 1):
-                src_c = source.cell(row=row_idx, column=c)
-                dst_c = ws_out.cell(row=row_idx, column=c, value=src_c.value)
+                src_c = source.cell(row=row_idx_source, column=c)
+                dst_c = ws_out.cell(row=row_idx_out, column=c, value=src_c.value)
                 _copy_cell_style(src_c, dst_c)
                 dst_c.font = _font_mod
         else:
             header_l = load_sheet_header(ws_l, max_col) if ws_l else []
             header_r = load_sheet_header(ws_r, max_col) if ws_r else []
-            col_idx_l = None
-            col_idx_r = None
-            for i, h in enumerate(header_l):
-                if key_str_normalized(h) == key_str_normalized(key):
-                    col_idx_l = i + 1
-                    break
-            for i, h in enumerate(header_r):
-                if key_str_normalized(h) == key_str_normalized(key):
-                    col_idx_r = i + 1
-                    break
+            norm_key = key_str_normalized(key)
+            col_idx_l = _normalized_header_to_index(header_l).get(norm_key)
+            col_idx_r = _normalized_header_to_index(header_r).get(norm_key)
             col_idx = col_idx_l if choice == "local" else col_idx_r
             source = ws_l if choice == "local" else ws_r
             if col_idx is None or not source:
@@ -697,7 +753,8 @@ def _merge_mode_b_preserve_format(path_in, path_other_side, path_out, base_side)
         max_col = max(max_col_in, max_col_o)
         header_in = load_sheet_header(ws_in, max_col)
         header_o = load_sheet_header(ws_o, max_col)
-        base_set_norm = set(header_normalize_for_compare(h) for h in header_in if h)
+        header_in_norm_to_idx = _compare_header_to_index(header_in)
+        base_set_norm = set(header_in_norm_to_idx)
         other_ordered = [h for h in header_o if h]
         new_cols = [h for h in other_ordered if header_normalize_for_compare(h) not in base_set_norm]
         merged_col_order = merge_ordered_with_new_cols([h for h in header_in if h], new_cols)
@@ -708,11 +765,7 @@ def _merge_mode_b_preserve_format(path_in, path_other_side, path_out, base_side)
         last_base_col = None
         inserts = []
         for h in merged_col_order:
-            idx_in = None
-            for i, x in enumerate(header_in):
-                if x == h or header_normalize_for_compare(x) == header_normalize_for_compare(h):
-                    idx_in = i + 1
-                    break
+            idx_in = header_in_norm_to_idx.get(header_normalize_for_compare(h))
             if idx_in is not None:
                 last_base_col = idx_in
             elif h in col_to_idx_o:
@@ -720,6 +773,7 @@ def _merge_mode_b_preserve_format(path_in, path_other_side, path_out, base_side)
                 insert_after = (last_base_col if last_base_col is not None else 0)
                 inserts.append((insert_after, h))
         max_row = max(ws_in.max_row or 1, ws_o.max_row or 1)
+        merged_cache_o = build_merged_cells_cache(ws_o) if has_merged_cells(ws_o) and inserts else None
         # 从后往前插入，避免列索引变化
         for insert_after, col_key in sorted(inserts, key=lambda x: -x[0]):
             col_o = col_to_idx_o[col_key]
@@ -730,7 +784,7 @@ def _merge_mode_b_preserve_format(path_in, path_other_side, path_out, base_side)
                 insert_at_col = (ws_in.max_column or 1) + 1
             ws_in.insert_cols(insert_at_col, 1)
             _shift_merged_cells_after_insert_cols(ws_in, insert_at_col, 1)
-            _copy_col_with_style(ws_o, ws_in, col_o, insert_at_col, max_row)
+            _copy_col_with_style(ws_o, ws_in, col_o, insert_at_col, max_row, merged_cache_o)
             _copy_col_merged_ranges_to(ws_o, col_o, ws_in, insert_at_col)
     wb_other.close()
     os.makedirs(os.path.dirname(os.path.abspath(path_out)) or ".", exist_ok=True)

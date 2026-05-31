@@ -40,68 +40,67 @@ def _is_pid_alive(pid):
         return False
 
 
-def try_acquire_compare_lock():
-    """尝试占用对比窗口锁。返回 True 表示成功，False 表示已有其他进程占用。"""
-    path = _lock_path("compare")
+def _try_acquire_lock(name):
+    """原子方式创建锁文件；遇到僵尸锁会清理后重试。"""
+    path = _lock_path(name)
+    for _ in range(3):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(str(os.getpid()))
+            return True
+        except FileExistsError:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    pid = int(f.read().strip())
+                if _is_pid_alive(pid):
+                    return False
+            except Exception:
+                pass
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+            except Exception:
+                return False
+        except Exception:
+            return False
+    return False
+
+
+def _release_lock(name):
+    path = _lock_path(name)
     try:
-        if os.path.isfile(path):
+        if not os.path.isfile(path):
+            return
+        try:
             with open(path, "r", encoding="utf-8") as f:
                 pid = int(f.read().strip())
-            if _is_pid_alive(pid):
-                return False
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(str(os.getpid()))
-        return True
-    except Exception:
-        try:
-            if os.path.isfile(path):
-                os.remove(path)
+            if pid != os.getpid():
+                return
         except Exception:
             pass
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(str(os.getpid()))
-        return True
+        os.remove(path)
+    except Exception:
+        pass
+
+
+def try_acquire_compare_lock():
+    """尝试占用对比窗口锁。返回 True 表示成功，False 表示已有其他进程占用。"""
+    return _try_acquire_lock("compare")
 
 
 def release_compare_lock():
-    try:
-        path = _lock_path("compare")
-        if os.path.isfile(path):
-            os.remove(path)
-    except Exception:
-        pass
+    _release_lock("compare")
 
 
 def try_acquire_merge_lock():
     """尝试占用合并窗口锁。返回 True 表示成功，False 表示已有其他进程占用。"""
-    path = _lock_path("merge")
-    try:
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
-                pid = int(f.read().strip())
-            if _is_pid_alive(pid):
-                return False
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(str(os.getpid()))
-        return True
-    except Exception:
-        try:
-            if os.path.isfile(path):
-                os.remove(path)
-        except Exception:
-            pass
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(str(os.getpid()))
-        return True
+    return _try_acquire_lock("merge")
 
 
 def release_merge_lock():
-    try:
-        path = _lock_path("merge")
-        if os.path.isfile(path):
-            os.remove(path)
-    except Exception:
-        pass
+    _release_lock("merge")
 
 
 def log(msg, is_error=False):

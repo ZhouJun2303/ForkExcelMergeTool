@@ -8,16 +8,27 @@
 import openpyxl
 
 from excel_io import (
+    build_merged_cells_cache,
     cell_str,
     col_equal,
     get_column_values,
     get_sheet_names,
+    has_merged_cells,
     key_str_normalized,
     load_sheet_header,
     load_sheet_rows_full,
     row_equal,
 )
 from log_util import log_path
+
+
+def _normalized_header_to_index(headers):
+    out = {}
+    for i, h in enumerate(headers):
+        key = key_str_normalized(h or "")
+        if key and key not in out:
+            out[key] = i + 1
+    return out
 
 
 def _dict_and_order(rows, row_indices):
@@ -285,24 +296,18 @@ def compute_conflicts_d(path_local, path_remote, path_base=None):
 
         header_l = load_sheet_header(ws_l, max_col)
         header_r = load_sheet_header(ws_r, max_col)
-        norm_to_col_l = {}
-        norm_to_col_r = {}
-        for i, h in enumerate(header_l):
-            if i >= max_col:
-                break
-            n = key_str_normalized(h or "")
-            if n:
-                norm_to_col_l[n] = i + 1
-        for i, h in enumerate(header_r):
-            if i >= max_col:
-                break
-            n = key_str_normalized(h or "")
-            if n:
-                norm_to_col_r[n] = i + 1
+        norm_to_col_l = _normalized_header_to_index(header_l[:max_col])
+        norm_to_col_r = _normalized_header_to_index(header_r[:max_col])
         common_headers = set(norm_to_col_l) & set(norm_to_col_r)
+        merged_cache_l = build_merged_cells_cache(ws_l) if has_merged_cells(ws_l) else None
+        merged_cache_r = build_merged_cells_cache(ws_r) if has_merged_cells(ws_r) else None
         for h_norm in common_headers:
-            col_l = get_column_values(ws_l, norm_to_col_l[h_norm], max_row)
-            col_r = get_column_values(ws_r, norm_to_col_r[h_norm], max_row)
+            col_l = get_column_values(
+                ws_l, norm_to_col_l[h_norm], max_row, merged_cache=merged_cache_l,
+            )
+            col_r = get_column_values(
+                ws_r, norm_to_col_r[h_norm], max_row, merged_cache=merged_cache_r,
+            )
             if not col_equal(col_l, col_r):
                 conflict_cols.append({
                     "sheet": sheet_name,
