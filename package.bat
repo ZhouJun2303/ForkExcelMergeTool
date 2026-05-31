@@ -46,7 +46,7 @@ echo.
 
 echo [2/4] Bump minor version and build ( %WINMODE% )...
 python Scripts\bump_version.py
-pyinstaller --onefile %WINMODE% --name ExcelMergeFork --clean Scripts\MergeExcelFork.py
+pyinstaller --onefile %WINMODE% --name ExcelMergeFork --clean --icon Assets\ExcelMergeFork.ico --add-data "Assets;Assets" Scripts\MergeExcelFork.py
 if %ERRORLEVEL% neq 0 (
     echo ERROR: PyInstaller build failed
     pause

@@ -35,10 +35,15 @@ from gui_common import (
     ToolTip,
     UI,
     UpdateButtonController,
+    apply_app_icon,
+    configure_button_icon,
     gui_log,
+    make_header_icon,
     make_badge,
     make_color_legend,
+    make_icon_button,
     make_separator,
+    make_update_card,
     open_excel_file,
     open_containing_folder,
     setup_merge_styles,
@@ -195,6 +200,7 @@ class MergeWindow:
         self.root.minsize(980, 680)
         self.root.geometry("1180x760")
         setup_merge_styles(self.root)
+        apply_app_icon(self.root)
         self.root.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
         self.local_info, self.remote_info = get_git_merge_info(path_merged)
@@ -216,11 +222,18 @@ class MergeWindow:
 
         title_row = ttk.Frame(shell, style="App.TFrame")
         title_row.pack(fill=tk.X)
-        ttk.Label(title_row, text="Excel 三向合并", style="Title.TLabel").pack(side=tk.LEFT)
-        make_badge(title_row, "v%s" % APP_VERSION, "primary").pack(side=tk.LEFT, padx=(10, 0))
-        self.btn_update = ttk.Button(title_row, text="更新", width=6, style="Tiny.TButton")
-        self.btn_update.pack(side=tk.LEFT, padx=(6, 0))
-        ToolTip(self.btn_update, "检查新版本")
+        make_header_icon(title_row, self.root).pack(side=tk.LEFT, padx=(0, 10))
+        title_text = ttk.Frame(title_row, style="App.TFrame")
+        title_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        headline = ttk.Frame(title_text, style="App.TFrame")
+        headline.pack(fill=tk.X)
+        ttk.Label(headline, text="Excel 三向合并", style="Title.TLabel").pack(side=tk.LEFT)
+        make_badge(headline, "v%s" % APP_VERSION, "primary").pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Label(
+            title_text,
+            text="预览 BASE / LOCAL / REMOTE 差异，选择规则后生成 Fork 可接收的合并结果。",
+            style="Subtitle.TLabel",
+        ).pack(anchor=tk.W, pady=(2, 0))
         self.preview_status_var = tk.StringVar(self.root, value="")
         ttk.Label(title_row, textvariable=self.preview_status_var, style="TLabel").pack(side=tk.RIGHT)
 
@@ -332,13 +345,13 @@ class MergeWindow:
         left_box.pack(fill=tk.X, pady=(6, 4))
         make_badge(left_box, "本地 Local", "neutral").pack(anchor=tk.W)
         self._fill_commit_info(left_box, self.local_info)
-        ttk.Button(left_box, text="打开本地 Excel", command=lambda: self._open_local(), style="Tiny.TButton").pack(anchor=tk.W, pady=(4, 0))
+        make_icon_button(left_box, self.root, "打开本地 Excel", "open", command=lambda: self._open_local(), style="Tiny.TButton").pack(anchor=tk.W, pady=(4, 0))
         make_separator(info_frame).pack(fill=tk.X, pady=(0, 4))
         right_box = ttk.Frame(info_frame, padding=(0, 6), style="Card.TFrame")
         right_box.pack(fill=tk.X)
         make_badge(right_box, "线上 Remote", "neutral").pack(anchor=tk.W)
         self._fill_commit_info(right_box, self.remote_info)
-        ttk.Button(right_box, text="打开线上 Excel", command=lambda: self._open_remote(), style="Tiny.TButton").pack(anchor=tk.W, pady=(4, 0))
+        make_icon_button(right_box, self.root, "打开线上 Excel", "open", command=lambda: self._open_remote(), style="Tiny.TButton").pack(anchor=tk.W, pady=(4, 0))
 
         make_separator(left_panel).pack(fill=tk.X, pady=12)
 
@@ -348,10 +361,25 @@ class MergeWindow:
         backup_row.pack(fill=tk.X, pady=(8, 0))
         backup_entry = ttk.Entry(backup_row, textvariable=self.backup_root_var)
         backup_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
-        btn_backup_pick = ttk.Button(backup_row, text="选择", command=self._on_choose_backup_root, style="Secondary.TButton")
+        btn_backup_pick = make_icon_button(backup_row, self.root, "选择", "folder", command=self._on_choose_backup_root, style="Secondary.TButton")
         btn_backup_pick.pack(side=tk.LEFT)
-        ttk.Button(backup_frame, text="保存备份设置", command=self._on_save_backup_root, style="Secondary.TButton").pack(anchor=tk.W, pady=(6, 0))
+        make_icon_button(backup_frame, self.root, "保存备份设置", "backup", command=self._on_save_backup_root, style="Secondary.TButton").pack(anchor=tk.W, pady=(6, 0))
         ToolTip(backup_entry, "留空时使用合并文件同目录下的 MergeExcelBackup。")
+
+        make_separator(left_panel).pack(fill=tk.X, pady=12)
+        (
+            update_card,
+            self.btn_update,
+            self.update_state_var,
+            self.update_state_label,
+            self.update_state_icon,
+            update_progress_row,
+            self.update_progress_var,
+            self.update_progress_label,
+            self.update_progress_bar,
+        ) = make_update_card(left_panel, self.root)
+        update_card.pack(fill=tk.X)
+        ToolTip(self.btn_update, "检查 GitHub Release 是否有新版本；exe 运行模式支持自动下载替换。")
 
         preview_top = ttk.Frame(right_panel, style="Panel.TFrame")
         preview_top.pack(fill=tk.X)
@@ -397,15 +425,15 @@ class MergeWindow:
         page_frame = ttk.Frame(self.content_frame, style="Panel.TFrame")
         page_frame.pack(fill=tk.X, pady=(8, 0))
         self.merge_page_var = tk.StringVar(self.root, value="")
-        ttk.Button(page_frame, text="上一页", command=lambda: self._change_merge_page(-1), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(page_frame, text="下一页", command=lambda: self._change_merge_page(1), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 10))
+        make_icon_button(page_frame, self.root, "上一页", "prev", command=lambda: self._change_merge_page(-1), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 4))
+        make_icon_button(page_frame, self.root, "下一页", "next", command=lambda: self._change_merge_page(1), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 10))
         ttk.Label(page_frame, textvariable=self.merge_page_var, style="Panel.TLabel").pack(side=tk.LEFT)
         sel_frame = ttk.Frame(self.content_frame, style="Panel.TFrame")
         sel_frame.pack(fill=tk.X, pady=(8, 0))
         ttk.Label(sel_frame, text="冲突选择", style="Panel.TLabel").pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(sel_frame, text="取本地", command=lambda: self._set_choice("本地"), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(sel_frame, text="取线上", command=lambda: self._set_choice("线上"), style="Secondary.TButton").pack(side=tk.LEFT)
-        ttk.Button(sel_frame, text="查看详情", command=self._show_selected_merge_detail, style="Secondary.TButton").pack(side=tk.RIGHT)
+        make_icon_button(sel_frame, self.root, "取本地", "check", command=lambda: self._set_choice("本地"), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 6))
+        make_icon_button(sel_frame, self.root, "取线上", "check", command=lambda: self._set_choice("线上"), style="Secondary.TButton").pack(side=tk.LEFT)
+        make_icon_button(sel_frame, self.root, "查看详情", "detail", command=self._show_selected_merge_detail, style="Secondary.TButton").pack(side=tk.RIGHT)
         ttk.Label(sel_frame, text="双击或回车查看完整内容", style="Muted.TLabel").pack(side=tk.RIGHT, padx=(0, 10))
 
         status_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
@@ -414,38 +442,36 @@ class MergeWindow:
         btn_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
         btn_row.pack(fill=tk.X, pady=(8, 0))
         self.btn_merge = ttk.Button(btn_row, text="生成合并结果", command=self._on_generate_merge, style="Accent.TButton")
+        configure_button_icon(self.root, self.btn_merge, "merge")
         self.btn_merge.pack(side=tk.LEFT, padx=(0, 8))
         self.btn_confirm = ttk.Button(btn_row, text="确认无误并解决冲突", command=self._on_confirm_done)
+        configure_button_icon(self.root, self.btn_confirm, "check")
         self.btn_confirm.pack(side=tk.LEFT, padx=(0, 8))
         self.btn_confirm.config(state=tk.DISABLED)
         self.btn_open_merged = ttk.Button(btn_row, text="打开合并结果", command=self._on_open_merged)
+        configure_button_icon(self.root, self.btn_open_merged, "open")
         self.btn_open_merged.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Checkbutton(
             btn_row, text="合并后自动打开", variable=self.auto_open_var,
             command=lambda: _save_auto_open_merged(self.auto_open_var.get()),
         ).pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Button(btn_row, text="取消", command=self._on_cancel, style="Secondary.TButton").pack(side=tk.LEFT)
+        make_icon_button(btn_row, self.root, "取消", "cancel", command=self._on_cancel, style="Secondary.TButton").pack(side=tk.LEFT)
         self.update_controller = UpdateButtonController(
             self.root, self.btn_update, status_var=self.status_var, on_quit=self._quit_for_update, compact=True,
         )
+        self.update_controller.bind_state_widget(self.update_state_var, self.update_state_label, self.update_state_icon)
 
         backup_btn_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
         backup_btn_row.pack(fill=tk.X, pady=(6, 0))
         self.btn_open_backup_merged = ttk.Button(backup_btn_row, text="打开备份文件", command=self._on_open_backup_merged)
+        configure_button_icon(self.root, self.btn_open_backup_merged, "open")
         self.btn_open_backup_merged.pack(side=tk.LEFT, padx=(0, 8))
         self.btn_manual_backup = ttk.Button(backup_btn_row, text="手动保存备份", command=self._on_manual_save_backup)
+        configure_button_icon(self.root, self.btn_manual_backup, "backup")
         self.btn_manual_backup.pack(side=tk.LEFT, padx=(0, 8))
         self.btn_open_backup_dir = ttk.Button(backup_btn_row, text="打开备份目录", command=self._on_open_backup_dir)
+        configure_button_icon(self.root, self.btn_open_backup_dir, "folder")
         self.btn_open_backup_dir.pack(side=tk.LEFT)
-
-        update_progress_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
-        self.update_progress_var = tk.IntVar(self.root, value=0)
-        self.update_progress_label = ttk.Label(update_progress_row, text="", style="Panel.TLabel")
-        self.update_progress_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
-        self.update_progress_bar = ttk.Progressbar(
-            update_progress_row, variable=self.update_progress_var, maximum=100, length=220,
-        )
-        self.update_progress_bar.grid(row=0, column=1, sticky=tk.W)
         self.update_controller.bind_progress_widgets(
             self.update_progress_bar, self.update_progress_var, self.update_progress_label, update_progress_row,
         )

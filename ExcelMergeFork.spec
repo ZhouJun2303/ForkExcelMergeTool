@@ -5,7 +5,7 @@ a = Analysis(
     ['Scripts\\MergeExcelFork.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('Assets', 'Assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -34,4 +34,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='Assets\\ExcelMergeFork.ico',
 )

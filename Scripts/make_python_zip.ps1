@@ -58,6 +58,11 @@ foreach ($name in $scriptNames) {
     }
 }
 
+$assetSrc = Join-Path $root "Assets"
+if (Test-Path -LiteralPath $assetSrc) {
+    Copy-Item -LiteralPath $assetSrc -Destination (Join-Path $stage "Assets") -Recurse -Force
+}
+
 try {
     Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $out -Force
 }

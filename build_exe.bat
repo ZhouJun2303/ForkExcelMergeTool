@@ -15,7 +15,7 @@ goto parse
 
 echo Bump version and build ExcelMergeFork.exe...
 python Scripts\bump_version.py
-pyinstaller --onefile %WINMODE% --name ExcelMergeFork Scripts\MergeExcelFork.py
+pyinstaller --onefile %WINMODE% --name ExcelMergeFork --icon Assets\ExcelMergeFork.ico --add-data "Assets;Assets" Scripts\MergeExcelFork.py
 if %ERRORLEVEL% neq 0 (
     echo ERROR: PyInstaller failed. Install with: pip install pyinstaller
     exit /b 1

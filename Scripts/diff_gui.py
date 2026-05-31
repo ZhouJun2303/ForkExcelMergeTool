@@ -18,9 +18,14 @@ from gui_common import (
     ToolTip,
     UI,
     UpdateButtonController,
+    apply_app_icon,
+    configure_button_icon,
     gui_log,
+    make_header_icon,
     make_badge,
     make_color_legend,
+    make_icon_button,
+    make_update_card,
     open_containing_folder,
     open_excel_file,
     setup_merge_styles,
@@ -154,6 +159,7 @@ class DiffWindow:
         self.root.minsize(920, 560)
         self.root.geometry("1120x680")
         setup_merge_styles(self.root)
+        apply_app_icon(self.root)
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         if self.update_controller:
@@ -294,18 +300,35 @@ class DiffWindow:
         top.pack(fill=tk.X)
         title_row = ttk.Frame(top, style="Panel.TFrame")
         title_row.pack(fill=tk.X)
+        make_header_icon(title_row, self.root, style_name="PanelIcon.TLabel").pack(side=tk.LEFT, padx=(0, 10))
+        title_text = ttk.Frame(title_row, style="Panel.TFrame")
+        title_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        headline = ttk.Frame(title_text, style="Panel.TFrame")
+        headline.pack(fill=tk.X)
         self.title_var = tk.StringVar(self.root, value="本地 (A) vs 线上 (B)")
-        ttk.Label(title_row, textvariable=self.title_var, style="PanelTitle.TLabel").pack(side=tk.LEFT)
-        make_badge(title_row, "v%s" % APP_VERSION, "primary").pack(side=tk.LEFT, padx=(10, 0))
-        self.btn_update = ttk.Button(title_row, text="更新", width=6, style="Tiny.TButton")
-        self.btn_update.pack(side=tk.LEFT, padx=(6, 0))
-        ToolTip(self.btn_update, "检查新版本")
-        self.btn_swap = ttk.Button(title_row, text="互换基准", command=self._on_swap_baseline, style="Secondary.TButton")
-        self.btn_swap.pack(side=tk.LEFT, padx=(16, 0))
+        ttk.Label(headline, textvariable=self.title_var, style="PanelTitle.TLabel").pack(side=tk.LEFT)
+        make_badge(headline, "v%s" % APP_VERSION, "primary").pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Label(title_text, text="快速查看两个 Excel 的新增、删除和修改，并导出对比工作簿。", style="Muted.TLabel").pack(anchor=tk.W, pady=(2, 0))
+        self.btn_swap = make_icon_button(title_row, self.root, "互换基准", "swap", command=self._on_swap_baseline, style="Secondary.TButton")
+        self.btn_swap.pack(side=tk.LEFT, padx=(16, 10))
         ToolTip(self.btn_swap, "交换 A/B 基准并重新计算差异。")
+        (
+            update_card,
+            self.btn_update,
+            self.update_state_var,
+            self.update_state_label,
+            self.update_state_icon,
+            update_progress_row,
+            self.update_progress_var,
+            self.update_progress_label,
+            self.update_progress_bar,
+        ) = make_update_card(title_row, self.root)
+        update_card.pack(side=tk.RIGHT, fill=tk.Y)
+        ToolTip(self.btn_update, "检查 GitHub Release 是否有新版本；exe 运行模式支持自动下载替换。")
         self.update_controller = UpdateButtonController(
             self.root, self.btn_update, status_var=self.status_var, on_quit=self._on_close, compact=True,
         )
+        self.update_controller.bind_state_widget(self.update_state_var, self.update_state_label, self.update_state_icon)
         self.path_a_var = tk.StringVar(self.root)
         self.path_b_var = tk.StringVar(self.root)
         self.path_a_label = None
@@ -313,14 +336,6 @@ class DiffWindow:
         self.path_a_tip = None
         self.path_b_tip = None
 
-        update_progress_row = ttk.Frame(top, style="Panel.TFrame")
-        self.update_progress_var = tk.IntVar(self.root, value=0)
-        self.update_progress_label = ttk.Label(update_progress_row, text="", style="Muted.TLabel")
-        self.update_progress_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
-        self.update_progress_bar = ttk.Progressbar(
-            update_progress_row, variable=self.update_progress_var, maximum=100, length=220,
-        )
-        self.update_progress_bar.grid(row=0, column=1, sticky=tk.W)
         self.update_controller.bind_progress_widgets(
             self.update_progress_bar, self.update_progress_var, self.update_progress_label, update_progress_row,
         )
@@ -333,8 +348,8 @@ class DiffWindow:
         self.path_a_label = ttk.Label(path_row_a, textvariable=self.path_a_var, style="Panel.TLabel")
         self.path_a_label.pack(side=tk.LEFT, anchor=tk.W, fill=tk.X, expand=True)
         self.path_a_tip = ToolTip(self.path_a_label, self.path_a)
-        ttk.Button(path_row_a, text="所在位置", command=lambda: self._open_side_folder("a"), style="Secondary.TButton").pack(side=tk.RIGHT)
-        ttk.Button(path_row_a, text="打开", command=lambda: self._open_side_file("a"), style="Secondary.TButton").pack(side=tk.RIGHT, padx=(6, 6))
+        make_icon_button(path_row_a, self.root, "所在位置", "folder", command=lambda: self._open_side_folder("a"), style="Secondary.TButton").pack(side=tk.RIGHT)
+        make_icon_button(path_row_a, self.root, "打开", "open", command=lambda: self._open_side_file("a"), style="Secondary.TButton").pack(side=tk.RIGHT, padx=(6, 6))
 
         path_row_b = ttk.Frame(path_panel, style="Panel.TFrame")
         path_row_b.pack(fill=tk.X)
@@ -342,8 +357,8 @@ class DiffWindow:
         self.path_b_label = ttk.Label(path_row_b, textvariable=self.path_b_var, style="Panel.TLabel")
         self.path_b_label.pack(side=tk.LEFT, anchor=tk.W, fill=tk.X, expand=True)
         self.path_b_tip = ToolTip(self.path_b_label, self.path_b)
-        ttk.Button(path_row_b, text="所在位置", command=lambda: self._open_side_folder("b"), style="Secondary.TButton").pack(side=tk.RIGHT)
-        ttk.Button(path_row_b, text="打开", command=lambda: self._open_side_file("b"), style="Secondary.TButton").pack(side=tk.RIGHT, padx=(6, 6))
+        make_icon_button(path_row_b, self.root, "所在位置", "folder", command=lambda: self._open_side_folder("b"), style="Secondary.TButton").pack(side=tk.RIGHT)
+        make_icon_button(path_row_b, self.root, "打开", "open", command=lambda: self._open_side_file("b"), style="Secondary.TButton").pack(side=tk.RIGHT, padx=(6, 6))
 
         toolbar = ttk.Frame(shell, padding=(12, 10), style="Panel.TFrame")
         toolbar.pack(fill=tk.X, pady=(10, 10))
@@ -402,8 +417,8 @@ class DiffWindow:
         page_row = ttk.Frame(table_frame, style="Panel.TFrame")
         page_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         self.diff_page_var = tk.StringVar(self.root, value="")
-        ttk.Button(page_row, text="上一页", command=lambda: self._change_diff_page(-1), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(page_row, text="下一页", command=lambda: self._change_diff_page(1), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        make_icon_button(page_row, self.root, "上一页", "prev", command=lambda: self._change_diff_page(-1), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 4))
+        make_icon_button(page_row, self.root, "下一页", "next", command=lambda: self._change_diff_page(1), style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(page_row, textvariable=self.diff_page_var, style="Panel.TLabel").pack(side=tk.LEFT)
         self._update_baseline_display()
 
@@ -411,12 +426,13 @@ class DiffWindow:
         btn_frame.pack(fill=tk.X)
         ttk.Label(btn_frame, textvariable=self.status_var, style="Panel.TLabel").pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.btn_open_excel = ttk.Button(btn_frame, text="打开 Excel", command=self._open_excel, style="Accent.TButton")
+        configure_button_icon(self.root, self.btn_open_excel, "open")
         self.btn_open_excel.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Checkbutton(
             btn_frame, text="对比后自动打开", variable=self.auto_open_var,
             command=lambda: _save_auto_open_compare(self.auto_open_var.get()),
         ).pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Button(btn_frame, text="关闭", command=self._on_close, style="Secondary.TButton").pack(side=tk.LEFT)
+        make_icon_button(btn_frame, self.root, "关闭", "cancel", command=self._on_close, style="Secondary.TButton").pack(side=tk.LEFT)
 
     def _open_side_file(self, side):
         """打开当前 A/B 的原始 Excel 文件。side: 'a' | 'b'"""

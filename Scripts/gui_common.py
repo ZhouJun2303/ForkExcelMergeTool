@@ -78,9 +78,233 @@ UI = {
 }
 
 
+def resource_path(*parts):
+    """返回源码/ PyInstaller 运行时均可访问的资源路径。"""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, *parts)
+
+
 def ui_font(size=9, weight="normal"):
     """统一 UI 字体，优先使用 Windows 中文界面更自然的微软雅黑。"""
     return ("Microsoft YaHei UI", size, weight)
+
+
+def _scaled(value, size):
+    return max(0, int(round(value * size / 16.0)))
+
+
+def _line(img, points, color, size=16, thickness=1):
+    """在 PhotoImage 上画一条简单折线，足够支撑小图标。"""
+    last = None
+    t = max(1, _scaled(thickness, size))
+    for raw_x, raw_y in points:
+        x = _scaled(raw_x, size)
+        y = _scaled(raw_y, size)
+        if last is not None:
+            lx, ly = last
+            dx = x - lx
+            dy = y - ly
+            steps = max(abs(dx), abs(dy), 1)
+            for i in range(steps + 1):
+                px = int(round(lx + dx * i / float(steps)))
+                py = int(round(ly + dy * i / float(steps)))
+                img.put(color, to=(px, py, min(size, px + t), min(size, py + t)))
+        last = (x, y)
+
+
+def _icon_asset_path(name, size):
+    asset_names = {
+        "download": "update_available",
+        "refresh": "update_checking",
+    }
+    asset_name = asset_names.get(name, name)
+    preferred_size = 32 if size >= 24 and asset_name == "app" else 16
+    path = resource_path("Assets", "icons", "%s_%d.png" % (asset_name, preferred_size))
+    if os.path.isfile(path):
+        return path
+    fallback = resource_path("Assets", "icons", "%s_16.png" % asset_name)
+    if os.path.isfile(fallback):
+        return fallback
+    return None
+
+
+def get_ui_icon(root, name, size=16, color=None):
+    """创建并缓存一组轻量 Tk 图标，避免额外图片依赖。"""
+    cache = getattr(root, "_excel_merge_ui_icons", None)
+    if cache is None:
+        cache = {}
+        root._excel_merge_ui_icons = cache
+    fg = color or UI["primary"]
+    key = (name, size, fg)
+    if key in cache:
+        return cache[key]
+
+    asset_path = _icon_asset_path(name, size)
+    if asset_path and color is None:
+        try:
+            img = tk.PhotoImage(master=root, file=asset_path)
+            cache[key] = img
+            return img
+        except Exception:
+            pass
+
+    img = tk.PhotoImage(master=root, width=size, height=size)
+
+    def rect(x1, y1, x2, y2, fill):
+        sx1, sy1, sx2, sy2 = (_scaled(x1, size), _scaled(y1, size), _scaled(x2, size), _scaled(y2, size))
+        if sx2 <= sx1:
+            sx2 = sx1 + 1
+        if sy2 <= sy1:
+            sy2 = sy1 + 1
+        img.put(fill, to=(sx1, sy1, min(size, sx2), min(size, sy2)))
+
+    def line(points, fill=fg, thickness=1):
+        _line(img, points, fill, size=size, thickness=thickness)
+
+    muted = UI["muted"]
+    green = UI["success"]
+    yellow = UI["warning"]
+    red = UI["danger"]
+    pale_blue = "#DBEAFE"
+    pale_gray = UI["deleted_bg"]
+
+    if name == "app":
+        rect(2, 1, 14, 15, pale_blue)
+        rect(3, 2, 13, 14, UI["panel"])
+        rect(3, 2, 13, 5, green)
+        rect(5, 7, 8, 8, green)
+        rect(9, 7, 12, 8, green)
+        rect(5, 10, 8, 11, green)
+        rect(9, 10, 12, 11, green)
+        line([(3, 5), (13, 5)], muted)
+    elif name in ("update", "download"):
+        rect(3, 12, 13, 14, pale_blue)
+        rect(4, 13, 12, 14, fg)
+        rect(7, 2, 9, 9, fg)
+        line([(4, 7), (8, 11), (12, 7)], fg, 2)
+    elif name == "refresh":
+        line([(4, 5), (6, 3), (10, 3), (12, 5), (12, 7)], fg, 2)
+        line([(12, 11), (10, 13), (6, 13), (4, 11), (4, 9)], fg, 2)
+        line([(10, 5), (12, 7), (14, 5)], fg, 1)
+        line([(6, 11), (4, 9), (2, 11)], fg, 1)
+    elif name == "open":
+        rect(4, 2, 11, 14, pale_gray)
+        rect(5, 3, 10, 13, UI["panel"])
+        rect(10, 3, 13, 6, pale_gray)
+        line([(10, 3), (13, 6), (10, 6), (10, 3)], muted)
+        rect(6, 8, 11, 9, fg)
+        rect(6, 10, 10, 11, fg)
+    elif name == "folder":
+        rect(2, 5, 7, 7, "#FDE68A")
+        rect(2, 7, 14, 13, "#FEF3C7")
+        rect(3, 8, 13, 12, yellow)
+    elif name == "merge":
+        rect(3, 2, 6, 5, fg)
+        rect(3, 11, 6, 14, fg)
+        rect(11, 6, 14, 9, green)
+        line([(5, 5), (5, 8), (11, 8)], fg, 2)
+        line([(5, 11), (5, 8)], fg, 2)
+    elif name == "check":
+        line([(3, 8), (7, 12), (13, 4)], green, 2)
+    elif name == "cancel":
+        line([(4, 4), (12, 12)], red, 2)
+        line([(12, 4), (4, 12)], red, 2)
+    elif name == "backup":
+        rect(3, 2, 13, 14, pale_gray)
+        rect(4, 3, 12, 7, fg)
+        rect(6, 10, 10, 13, UI["panel"])
+        rect(9, 3, 11, 6, UI["panel"])
+    elif name == "swap":
+        line([(3, 5), (12, 5)], fg, 2)
+        line([(10, 3), (13, 5), (10, 7)], fg, 1)
+        line([(13, 11), (4, 11)], green, 2)
+        line([(6, 9), (3, 11), (6, 13)], green, 1)
+    elif name == "detail":
+        rect(4, 4, 10, 10, UI["panel"])
+        line([(4, 4), (10, 4), (10, 10), (4, 10), (4, 4)], fg, 1)
+        line([(9, 9), (13, 13)], fg, 2)
+    elif name == "prev":
+        line([(11, 3), (5, 8), (11, 13)], fg, 2)
+    elif name == "next":
+        line([(5, 3), (11, 8), (5, 13)], fg, 2)
+    else:
+        rect(4, 4, 12, 12, fg)
+
+    cache[key] = img
+    return img
+
+
+def configure_button_icon(root, button, icon_name, size=16, color=None):
+    """给 ttk.Button 配置小图标，并缓存引用避免被 Tk 回收。"""
+    try:
+        img = get_ui_icon(root, icon_name, size=size, color=color)
+        button.configure(image=img, compound=tk.LEFT)
+        button._excel_merge_icon = img
+    except Exception:
+        pass
+    return button
+
+
+def make_icon_button(parent, root, text, icon_name, command=None, style="Secondary.TButton", **kwargs):
+    """创建带统一小图标的按钮。"""
+    button = ttk.Button(parent, text=text, command=command, style=style, **kwargs)
+    configure_button_icon(root, button, icon_name)
+    return button
+
+
+def make_header_icon(parent, root, style_name="Icon.TLabel"):
+    """标题区应用图标。"""
+    img = get_ui_icon(root, "app", size=32)
+    label = ttk.Label(parent, image=img, style=style_name)
+    label._excel_merge_icon = img
+    return label
+
+
+def make_update_card(parent, root):
+    """创建现代化更新状态卡片，返回 controller 需要绑定的控件。"""
+    card = ttk.Frame(parent, padding=(10, 8), style="UpdateCard.TFrame")
+    title_row = ttk.Frame(card, style="UpdateCard.TFrame")
+    title_row.pack(fill=tk.X)
+    ttk.Label(title_row, text="程序更新", style="UpdateTitle.TLabel").pack(side=tk.LEFT)
+    btn_update = ttk.Button(title_row, text="检查更新", style="Tool.TButton")
+    btn_update.pack(side=tk.RIGHT)
+    state_var = tk.StringVar(root, value="")
+    state_row = ttk.Frame(card, style="UpdateCard.TFrame")
+    state_row.pack(fill=tk.X, pady=(5, 0))
+    state_icon = ttk.Label(state_row, image=get_ui_icon(root, "update", size=16), style="UpdateIcon.TLabel")
+    state_icon._excel_merge_icon = get_ui_icon(root, "update", size=16)
+    state_icon.pack(side=tk.LEFT, padx=(0, 6))
+    state_label = ttk.Label(state_row, textvariable=state_var, style="UpdateIdle.TLabel")
+    state_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+    progress_row = ttk.Frame(card, style="UpdateCard.TFrame")
+    progress_var = tk.IntVar(root, value=0)
+    progress_label = ttk.Label(progress_row, text="", style="UpdateIdle.TLabel")
+    progress_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
+    progress_bar = ttk.Progressbar(progress_row, variable=progress_var, maximum=100, length=190)
+    progress_bar.grid(row=0, column=1, sticky=tk.EW)
+    progress_row.columnconfigure(1, weight=1)
+    return card, btn_update, state_var, state_label, state_icon, progress_row, progress_var, progress_label, progress_bar
+
+
+def apply_app_icon(root):
+    """设置窗口/任务栏图标。"""
+    ico_path = resource_path("Assets", "ExcelMergeFork.ico")
+    if os.path.isfile(ico_path):
+        try:
+            root.iconbitmap(ico_path)
+            return True
+        except Exception:
+            pass
+    try:
+        icon = get_ui_icon(root, "app", size=32)
+        root.iconphoto(True, icon)
+        return True
+    except Exception:
+        return False
 
 
 def make_color_legend(parent, items, bg=None):
@@ -261,16 +485,26 @@ def setup_merge_styles(root):
     style.configure("App.TFrame", background=bg)
     style.configure("Panel.TFrame", background=panel, relief=tk.FLAT)
     style.configure("Card.TFrame", background=UI["panel_alt"], relief=tk.FLAT)
+    style.configure("UpdateCard.TFrame", background=UI["panel_alt"], relief=tk.FLAT)
     style.configure("Toolbar.TFrame", background=panel)
     style.configure("BottomBar.TFrame", background=panel)
     style.configure("TLabel", background=bg, foreground=fg, font=ui_font(9))
+    style.configure("Icon.TLabel", background=bg)
+    style.configure("PanelIcon.TLabel", background=panel)
+    style.configure("UpdateIcon.TLabel", background=UI["panel_alt"])
     style.configure("Panel.TLabel", background=panel, foreground=fg, font=ui_font(9))
     style.configure("Card.TLabel", background=UI["panel_alt"], foreground=fg, font=ui_font(9))
     style.configure("CardMuted.TLabel", background=UI["panel_alt"], foreground=muted, font=ui_font(8))
     style.configure("CardSection.TLabel", background=UI["panel_alt"], foreground=fg, font=ui_font(10, "bold"))
+    style.configure("UpdateTitle.TLabel", background=UI["panel_alt"], foreground=fg, font=ui_font(9, "bold"))
+    style.configure("UpdateIdle.TLabel", background=UI["panel_alt"], foreground=muted, font=ui_font(8))
+    style.configure("UpdateChecking.TLabel", background=UI["panel_alt"], foreground=UI["primary"], font=ui_font(8, "bold"))
+    style.configure("UpdateReady.TLabel", background=UI["panel_alt"], foreground=UI["success"], font=ui_font(8, "bold"))
+    style.configure("UpdateError.TLabel", background=UI["panel_alt"], foreground=UI["danger"], font=ui_font(8, "bold"))
     style.configure("Muted.TLabel", background=panel, foreground=muted, font=ui_font(8))
     style.configure("Title.TLabel", background=bg, foreground=fg, font=ui_font(16, "bold"))
     style.configure("PanelTitle.TLabel", background=panel, foreground=fg, font=ui_font(16, "bold"))
+    style.configure("Subtitle.TLabel", background=bg, foreground=muted, font=ui_font(9))
     style.configure("Section.TLabel", background=panel, foreground=fg, font=ui_font(10, "bold"))
     style.configure("TLabelframe", background=panel, borderwidth=1, relief=tk.SOLID)
     style.configure("TLabelframe.Label", background=panel, foreground=fg, font=ui_font(9, "bold"))
@@ -278,6 +512,7 @@ def setup_merge_styles(root):
     style.configure("Secondary.TButton", font=ui_font(9), padding=(10, 6))
     style.configure("Tiny.TButton", font=ui_font(8), padding=(7, 3))
     style.configure("Accent.TButton", font=ui_font(9, "bold"), padding=(14, 7))
+    style.configure("Tool.TButton", font=ui_font(9), padding=(9, 5))
     style.map(
         "TButton",
         foreground=[("disabled", "#64748B"), ("!disabled", fg)],
@@ -297,6 +532,11 @@ def setup_merge_styles(root):
         "Accent.TButton",
         foreground=[("disabled", "#64748B"), ("!disabled", fg)],
         background=[("active", "#DBEAFE"), ("disabled", "#F1F5F9"), ("!disabled", "#FFFFFF")],
+    )
+    style.map(
+        "Tool.TButton",
+        foreground=[("disabled", "#64748B"), ("!disabled", fg)],
+        background=[("active", "#E2E8F0"), ("disabled", "#F1F5F9"), ("!disabled", "#FFFFFF")],
     )
     style.configure("TCheckbutton", background=panel, foreground=fg, font=ui_font(9), padding=(2, 4))
     style.configure("TRadiobutton", background=panel, foreground=fg, font=ui_font(9), padding=(2, 4))
@@ -329,18 +569,23 @@ class UpdateButtonController:
         self.status_var = status_var
         self.on_quit = on_quit
         self.compact = compact
-        self.default_text = "更新" if compact else "检查更新"
-        self.checking_text = "检查中" if compact else "检查中..."
-        self.available_text = "新版" if compact else None
-        self.downloading_text = "下载中" if compact else "下载中..."
+        self.default_text = "检查更新"
+        self.checking_text = "检查中..."
+        self.available_text = None
+        self.downloading_text = "下载中..."
         self.progress_container = None
         self.progress_var = None
         self.progress_bar = None
         self.progress_label = None
+        self.state_var = None
+        self.state_label = None
+        self.state_icon = None
         self.info = None
         self.checking = False
         self.installing = False
         self.button.config(text=self.default_text, command=self.on_click)
+        configure_button_icon(self.root, self.button, "update")
+        self._set_state_text("尚未检查更新", "idle")
         self._apply_cached_info()
 
     def bind_progress_widgets(self, progress_bar, progress_var, progress_label=None, progress_container=None):
@@ -350,16 +595,28 @@ class UpdateButtonController:
         self.progress_label = progress_label
         self._set_progress_visible(False)
 
+    def bind_state_widget(self, state_var, state_label=None, state_icon=None):
+        self.state_var = state_var
+        self.state_label = state_label
+        self.state_icon = state_icon
+        self._apply_cached_info()
+        if not self.info:
+            self._set_state_text("尚未检查更新", "idle")
+
     def start_background_check(self):
         cached = cached_update_info()
         if cached and cached.get("available"):
             self._set_check_result(cached, silent=True, from_cache=True)
         if not should_auto_check_update():
+            if not (self.info and self.info.get("available")):
+                self._set_state_text("自动检查已完成，点击可手动检查", "idle")
             return
         if self.checking:
             return
         self.checking = True
         self.button.config(text=self.checking_text, state=tk.DISABLED)
+        configure_button_icon(self.root, self.button, "refresh")
+        self._set_state_text("正在后台检查更新...", "checking")
         self._set_progress_visible(True, mode="indeterminate", text="检查更新中...")
 
         def worker():
@@ -388,6 +645,8 @@ class UpdateButtonController:
             return
         self.checking = True
         self.button.config(text=self.checking_text, state=tk.DISABLED)
+        configure_button_icon(self.root, self.button, "refresh")
+        self._set_state_text("正在连接 GitHub Release...", "checking")
         self._set_progress_visible(True, mode="indeterminate", text="检查更新中...")
         gui_log("正在检查更新...", self.status_var)
 
@@ -407,6 +666,8 @@ class UpdateButtonController:
             self.info = info
             text = self.available_text or ("有新版本 v%s" % info.get("latest_version"))
             self.button.config(text=text)
+            configure_button_icon(self.root, self.button, "update_available")
+            self._set_state_text("可更新到 v%s" % info.get("latest_version"), "ready")
 
     def _set_check_result(self, info, silent, from_cache=False):
         self.checking = False
@@ -417,12 +678,16 @@ class UpdateButtonController:
         if info.get("available"):
             text = self.available_text or ("有新版本 v%s" % info.get("latest_version"))
             self.button.config(text=text)
+            configure_button_icon(self.root, self.button, "update_available")
+            self._set_state_text("发现新版本 v%s" % info.get("latest_version"), "ready")
             if not from_cache:
                 gui_log("发现新版本 v%s，请点击按钮更新。" % info.get("latest_version"), self.status_var)
             if not silent:
                 self._confirm_and_install(info)
             return
         self.button.config(text=self.default_text)
+        configure_button_icon(self.root, self.button, "update")
+        self._set_state_text("当前已是最新版本 v%s" % info.get("current_version"), "ready")
         if not silent:
             if info.get("missing_asset"):
                 messagebox.showwarning("检查更新", "最新 Release 未找到 ExcelMergeFork.exe。")
@@ -432,6 +697,8 @@ class UpdateButtonController:
     def _set_check_error(self, err, silent):
         self.checking = False
         self.button.config(text=self.default_text, state=tk.NORMAL)
+        configure_button_icon(self.root, self.button, "update")
+        self._set_state_text("更新检查失败，点击重试", "error")
         self._set_progress_visible(False)
         if not silent:
             messagebox.showerror("检查更新失败", str(err))
@@ -452,6 +719,8 @@ class UpdateButtonController:
             return
         self.installing = True
         self.button.config(text=self.downloading_text, state=tk.DISABLED)
+        configure_button_icon(self.root, self.button, "download")
+        self._set_state_text("正在下载 v%s..." % info.get("latest_version"), "checking")
         self._set_progress_visible(True, mode="indeterminate", text="准备下载...")
         gui_log("正在下载 v%s..." % info.get("latest_version"), self.status_var)
 
@@ -472,6 +741,8 @@ class UpdateButtonController:
         self.installing = False
         self._set_progress_visible(True, mode="determinate", value=100, text="下载完成，等待替换...")
         self.button.config(text=(self.available_text or ("有新版本 v%s" % self.info.get("latest_version"))), state=tk.NORMAL)
+        configure_button_icon(self.root, self.button, "check", color=UI["success"])
+        self._set_state_text("下载完成，准备替换程序", "ready")
         messagebox.showinfo("更新已准备好", "更新包已下载。点击确定后会关闭当前窗口，并自动替换 ExcelMergeFork.exe。")
         launch_update_script(script)
         if self.on_quit:
@@ -484,6 +755,8 @@ class UpdateButtonController:
         self.installing = False
         self._set_progress_visible(False)
         self.button.config(text=(self.available_text or ("有新版本 v%s" % self.info.get("latest_version"))), state=tk.NORMAL)
+        configure_button_icon(self.root, self.button, "update_available")
+        self._set_state_text("更新下载失败，点击可重试", "error")
         if isinstance(err, UpdateError):
             msg = str(err)
         else:
@@ -532,5 +805,38 @@ class UpdateButtonController:
         if total > 0:
             percent = int(downloaded * 100 / total)
             self._set_progress_visible(True, mode="determinate", value=percent, text="下载中 %d%%" % percent)
+            self._set_state_text("正在下载更新 %d%%" % percent, "checking")
         else:
             self._set_progress_visible(True, mode="indeterminate", text="下载中...")
+            self._set_state_text("正在下载更新...", "checking")
+
+    def _set_state_text(self, text, tone="idle"):
+        if self.state_var is not None:
+            try:
+                self.state_var.set(text)
+            except Exception:
+                pass
+        if self.state_label is not None:
+            style_name = {
+                "idle": "UpdateIdle.TLabel",
+                "checking": "UpdateChecking.TLabel",
+                "ready": "UpdateReady.TLabel",
+                "error": "UpdateError.TLabel",
+            }.get(tone, "UpdateIdle.TLabel")
+            try:
+                self.state_label.configure(style=style_name)
+            except Exception:
+                pass
+        if self.state_icon is not None:
+            icon_name = {
+                "idle": "update",
+                "checking": "update_checking",
+                "ready": "update_available",
+                "error": "update_error",
+            }.get(tone, "update")
+            try:
+                img = get_ui_icon(self.root, icon_name, size=16)
+                self.state_icon.configure(image=img)
+                self.state_icon._excel_merge_icon = img
+            except Exception:
+                pass
