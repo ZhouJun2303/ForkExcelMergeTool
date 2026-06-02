@@ -102,6 +102,14 @@ def _git_root(cwd):
     return cwd
 
 
+def _excel_temp_ext(path_current, repo_path):
+    for path in (repo_path, path_current):
+        ext = os.path.splitext(path or "")[1]
+        if ext:
+            return ext
+    return ".xlsx"
+
+
 def run_git_merge_driver(path_base, path_current, path_other, repo_path):
     """
     Git driver 入口。
@@ -119,10 +127,11 @@ def run_git_merge_driver(path_base, path_current, path_other, repo_path):
         ))
 
         temp_dir = tempfile.mkdtemp(prefix="ExcelMergeForkDriver_")
-        temp_base = os.path.join(temp_dir, "base.xlsx")
-        temp_local = os.path.join(temp_dir, "local.xlsx")
-        temp_remote = os.path.join(temp_dir, "remote.xlsx")
-        temp_merged = os.path.join(temp_dir, "merged.xlsx")
+        ext = _excel_temp_ext(path_current, repo_path)
+        temp_base = os.path.join(temp_dir, "base" + ext)
+        temp_local = os.path.join(temp_dir, "local" + ext)
+        temp_remote = os.path.join(temp_dir, "remote" + ext)
+        temp_merged = os.path.join(temp_dir, "merged" + ext)
 
         _copy_input(path_base, temp_base, "BASE")
         _copy_input(path_current, temp_local, "CURRENT")

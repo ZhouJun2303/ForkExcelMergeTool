@@ -17,6 +17,16 @@ $attributesFile = Get-AttributesFile
 if (Test-Path -LiteralPath $attributesFile) {
     $remove = @(
         "# ExcelMergeFork managed entry",
+        "*.[xX][lL][sS] merge=excelmergefork",
+        "*.[xX][lL][sS][xX] merge=excelmergefork",
+        "*.[xX][lL][sS][mM] merge=excelmergefork",
+        "*.[xX][lL][sS][bB] merge=excelmergefork",
+        "*.[xX][lL][tT] merge=excelmergefork",
+        "*.[xX][lL][tT][xX] merge=excelmergefork",
+        "*.[xX][lL][tT][mM] merge=excelmergefork",
+        "*.[xX][lL][aA] merge=excelmergefork",
+        "*.[xX][lL][aA][mM] merge=excelmergefork",
+        "*.[xX][lL][wW] merge=excelmergefork",
         "*.xlsx merge=excelmergefork",
         "*.XLSX merge=excelmergefork"
     )

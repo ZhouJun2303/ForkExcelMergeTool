@@ -46,9 +46,23 @@ if (-not (Test-Path -LiteralPath $attributesFile)) {
 $content = Get-Content -LiteralPath $attributesFile -ErrorAction SilentlyContinue
 $managed = @(
     "# ExcelMergeFork managed entry",
+    "*.[xX][lL][sS] merge=excelmergefork",
+    "*.[xX][lL][sS][xX] merge=excelmergefork",
+    "*.[xX][lL][sS][mM] merge=excelmergefork",
+    "*.[xX][lL][sS][bB] merge=excelmergefork",
+    "*.[xX][lL][tT] merge=excelmergefork",
+    "*.[xX][lL][tT][xX] merge=excelmergefork",
+    "*.[xX][lL][tT][mM] merge=excelmergefork",
+    "*.[xX][lL][aA] merge=excelmergefork",
+    "*.[xX][lL][aA][mM] merge=excelmergefork",
+    "*.[xX][lL][wW] merge=excelmergefork"
+)
+$legacy = @(
     "*.xlsx merge=excelmergefork",
     "*.XLSX merge=excelmergefork"
 )
+$content = @($content | Where-Object { $legacy -notcontains $_ })
+$content | Set-Content -LiteralPath $attributesFile -Encoding UTF8
 $changed = $false
 foreach ($line in $managed) {
     if ($content -notcontains $line) {
@@ -65,4 +79,4 @@ if ($changed) {
 } else {
     Write-Host "Attributes entries already exist."
 }
-Write-Host "Done. New Git merges can use excelmergefork for .xlsx files."
+Write-Host "Done. New Git merges can use excelmergefork for common Excel file extensions."

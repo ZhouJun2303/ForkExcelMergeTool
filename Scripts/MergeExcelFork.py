@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Fork Excel Merge Tool 入口。
-只做一件事：解析命令行参数（支持 Fork 传入的逗号拼接路径），根据参数个数启动合并 GUI 或对比 GUI，
-失败时回退到命令行合并/对比；不包含具体合并、对比、冲突检测逻辑。
+只做一件事：解析命令行参数（支持 Fork 传入的逗号拼接路径），根据默认运行模式启动设置中心、快速备份、
+合并 GUI 或对比 GUI；失败时回退到命令行合并/对比。
 
 用法:
   合并（4 参数）: python MergeExcelFork.py <local> <base> <remote> <merged>
@@ -18,6 +18,8 @@ import sys
 import traceback
 
 from tkinter import messagebox
+from app_settings import STARTUP_FEATURE_BACKUP_ONLY, load_startup_feature
+from excel_format import merge_diff_extension_text, merge_diff_supported
 from log_util import (
     log,
     release_compare_lock,
@@ -27,6 +29,21 @@ from log_util import (
 )
 
 
+def _unsupported_merge_diff_files(paths):
+    return [p for p in paths if p and not merge_diff_supported(p)]
+
+
+def _show_unsupported_format(mode, paths):
+    from quick_backup_gui import show_quick_backup_panel
+
+    msg = (
+        "当前默认运行模式是合并对比模式，但这些 Excel 后缀暂不支持解析：\n%s\n\n"
+        "合并对比模式当前支持：%s。\n"
+        "可以在设置中心切换到快速备份模式，或先把文件转换为支持的格式。"
+    ) % ("\n".join(paths), merge_diff_extension_text())
+    show_quick_backup_panel(mode, error=msg)
+
+
 def _normalize_args():
     """
     Fork 可能将多个路径合并为单个参数 "path1,path2" 或 "path1,path2,path3,path4"，
@@ -34,6 +51,10 @@ def _normalize_args():
     """
     raw = sys.argv[1:]
     log("启动 原始 args=%s" % raw)
+    if not raw:
+        return "main", []
+    if raw and raw[0] == "--main":
+        return "main", raw[1:]
     if raw and raw[0] == "--git-merge-driver":
         return "git-driver", raw[1:]
     raw = list(raw)
@@ -86,11 +107,40 @@ def main():
             elif len(args) == 2:
                 mode = "compare"
 
+        if mode == "main":
+            from main_gui import MainWindow
+            win = MainWindow()
+            win.run()
+            sys.exit(0)
+
         if mode == "git-driver":
             if argc != 4:
                 msg = "Usage: --git-merge-driver <base> <current> <other> <repo-path>"
                 log(msg, is_error=True)
                 print(msg, file=sys.stderr)
+                sys.exit(1)
+            if load_startup_feature() == STARTUP_FEATURE_BACKUP_ONLY:
+                from quick_backup import quick_backup_git_driver
+                from quick_backup_gui import show_quick_backup_panel
+                try:
+                    try:
+                        from git_merge_driver import _resolve_context_path
+                        context_path = _resolve_context_path(args[1], args[3])
+                    except Exception:
+                        context_path = args[3] or args[1]
+                    info = quick_backup_git_driver(args[0], args[1], args[2], context_path=context_path)
+                    log("[QuickBackup] git-driver 已备份，保持未解决状态: %s" % info.get("dir"))
+                    print("OK: 已快速备份，Git 冲突保持未解决。备份=%s" % info.get("dir"), file=sys.stdout)
+                    show_quick_backup_panel("git-driver", backup_info=info)
+                    sys.exit(1)
+                except Exception as e:
+                    log("[QuickBackup] git-driver 备份失败: %s" % e, is_error=True)
+                    print("ERROR: 快速备份失败: %s" % e, file=sys.stderr)
+                    show_quick_backup_panel("git-driver", error=e)
+                    sys.exit(2)
+            unsupported = _unsupported_merge_diff_files([args[0], args[1], args[2]])
+            if unsupported:
+                _show_unsupported_format("git-driver", unsupported)
                 sys.exit(1)
             from git_merge_driver import run_git_merge_driver
             sys.exit(run_git_merge_driver(args[0], args[1], args[2], args[3]))
@@ -103,6 +153,23 @@ def main():
                     log(msg, is_error=True)
                     print("ERROR: " + msg, file=sys.stderr)
                     sys.exit(1)
+            if load_startup_feature() == STARTUP_FEATURE_BACKUP_ONLY:
+                from quick_backup import quick_backup_merge
+                from quick_backup_gui import show_quick_backup_panel
+                try:
+                    info = quick_backup_merge(path_local, path_base, path_remote, path_merged)
+                    print("OK: 已快速备份。备份=%s" % info.get("dir"), file=sys.stdout)
+                    show_quick_backup_panel("merge", backup_info=info)
+                    sys.exit(0)
+                except Exception as e:
+                    log("快速备份失败: %s" % e, is_error=True)
+                    print("ERROR: 快速备份失败: %s" % e, file=sys.stderr)
+                    show_quick_backup_panel("merge", error=e)
+                    sys.exit(2)
+            unsupported = _unsupported_merge_diff_files([path_local, path_base, path_remote, path_merged])
+            if unsupported:
+                _show_unsupported_format("merge", unsupported)
+                sys.exit(1)
             try:
                 from merge_gui import MergeWindow, get_existing_merge_window
                 existing = get_existing_merge_window()
@@ -140,6 +207,23 @@ def main():
                 log(msg, is_error=True)
                 print("ERROR: " + msg, file=sys.stderr)
                 sys.exit(1)
+            if load_startup_feature() == STARTUP_FEATURE_BACKUP_ONLY:
+                from quick_backup import quick_backup_compare
+                from quick_backup_gui import show_quick_backup_panel
+                try:
+                    info = quick_backup_compare(path_remote, path_local)
+                    print("OK: 已快速备份。备份=%s" % info.get("dir"), file=sys.stdout)
+                    show_quick_backup_panel("compare", backup_info=info)
+                    sys.exit(0)
+                except Exception as e:
+                    log("快速备份失败: %s" % e, is_error=True)
+                    print("ERROR: 快速备份失败: %s" % e, file=sys.stderr)
+                    show_quick_backup_panel("compare", error=e)
+                    sys.exit(2)
+            unsupported = _unsupported_merge_diff_files([path_remote, path_local])
+            if unsupported:
+                _show_unsupported_format("compare", unsupported)
+                sys.exit(1)
             try:
                 from diff_gui import DiffWindow, get_existing_diff_window
                 existing = get_existing_diff_window()
@@ -166,7 +250,7 @@ def main():
                 sys.exit(code if isinstance(code, int) else 0)
 
         else:
-            msg = "Usage: Merge (4 args) | Compare (2 args). Fork 可能传 path1,path2 单参数，已支持拆分"
+            msg = "Usage: Settings Center (no args/--main) | Merge (4 args) | Compare (2 args). Fork 可能传 path1,path2 单参数，已支持拆分"
             log(msg)
             print(msg, file=sys.stderr)
             sys.exit(1)

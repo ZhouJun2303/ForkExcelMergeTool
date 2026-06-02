@@ -34,7 +34,6 @@ from version import __version__ as APP_VERSION
 from gui_common import (
     ToolTip,
     UI,
-    UpdateButtonController,
     apply_app_icon,
     configure_button_icon,
     gui_log,
@@ -43,7 +42,6 @@ from gui_common import (
     make_color_legend,
     make_icon_button,
     make_separator,
-    make_update_card,
     open_excel_file,
     open_containing_folder,
     setup_merge_styles,
@@ -180,8 +178,6 @@ class MergeWindow:
         self.tree = None
         self.option_vars = {}
         self.conflict_entries = []
-        self.update_controller = None
-        self.update_progress_var = None
         self._merge_items = []
         self._merge_page = 0
         self.merge_page_var = None
@@ -205,8 +201,6 @@ class MergeWindow:
 
         self.local_info, self.remote_info = get_git_merge_info(path_merged)
         self._build_ui()
-        if self.update_controller:
-            self.update_controller.start_background_check()
         self._schedule_preview_refresh()
 
     def _build_ui(self):
@@ -229,9 +223,9 @@ class MergeWindow:
         headline.pack(fill=tk.X)
         ttk.Label(headline, text="Excel 多模式合并", style="Title.TLabel").pack(side=tk.LEFT)
         make_badge(headline, "v%s" % APP_VERSION, "primary").pack(side=tk.LEFT, padx=(10, 0))
-        self.btn_update = make_icon_button(headline, self.root, "手动检查更新", "update", style="Tiny.TButton")
-        self.btn_update.pack(side=tk.LEFT, padx=(8, 0))
-        ToolTip(self.btn_update, "手动检查 GitHub Release 是否有新版本；exe 运行模式支持自动下载替换。")
+        self.btn_main = make_icon_button(headline, self.root, "设置中心", "app", command=self._open_main, style="Tiny.TButton")
+        self.btn_main.pack(side=tk.LEFT, padx=(8, 0))
+        ToolTip(self.btn_main, "打开设置中心，设置默认运行模式、备份目录、全局 Git 注入和程序更新。")
         ttk.Label(
             title_text,
             text="预览 BASE / LOCAL / REMOTE 差异，选择规则后生成 Fork 可接收的合并结果。",
@@ -369,20 +363,6 @@ class MergeWindow:
         make_icon_button(backup_frame, self.root, "保存备份设置", "backup", command=self._on_save_backup_root, style="Secondary.TButton").pack(anchor=tk.W, pady=(6, 0))
         ToolTip(backup_entry, "留空时使用合并文件同目录下的 MergeExcelBackup。")
 
-        make_separator(left_panel).pack(fill=tk.X, pady=12)
-        (
-            update_card,
-            _update_card_button,
-            self.update_state_var,
-            self.update_state_label,
-            self.update_state_icon,
-            update_progress_row,
-            self.update_progress_var,
-            self.update_progress_label,
-            self.update_progress_bar,
-        ) = make_update_card(left_panel, self.root, include_button=False)
-        update_card.pack(fill=tk.X)
-
         preview_top = ttk.Frame(right_panel, style="Panel.TFrame")
         preview_top.pack(fill=tk.X)
         ttk.Label(preview_top, text="差异预览", style="Section.TLabel").pack(side=tk.LEFT)
@@ -458,11 +438,6 @@ class MergeWindow:
             command=lambda: _save_auto_open_merged(self.auto_open_var.get()),
         ).pack(side=tk.LEFT, padx=(0, 12))
         make_icon_button(btn_row, self.root, "取消", "cancel", command=self._on_cancel, style="Secondary.TButton").pack(side=tk.LEFT)
-        self.update_controller = UpdateButtonController(
-            self.root, self.btn_update, status_var=self.status_var, on_quit=self._quit_for_update, compact=True,
-        )
-        self.update_controller.bind_state_widget(self.update_state_var, self.update_state_label, self.update_state_icon)
-
         backup_btn_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
         backup_btn_row.pack(fill=tk.X, pady=(6, 0))
         self.btn_open_backup_merged = ttk.Button(backup_btn_row, text="打开备份文件", command=self._on_open_backup_merged)
@@ -474,10 +449,6 @@ class MergeWindow:
         self.btn_open_backup_dir = ttk.Button(backup_btn_row, text="打开备份目录", command=self._on_open_backup_dir)
         configure_button_icon(self.root, self.btn_open_backup_dir, "folder")
         self.btn_open_backup_dir.pack(side=tk.LEFT)
-        self.update_controller.bind_progress_widgets(
-            self.update_progress_bar, self.update_progress_var, self.update_progress_label, update_progress_row,
-        )
-
     def _get_options(self):
         """返回当前勾选的选项集合 {"A","B",...}。"""
         return {k for k, v in self.option_vars.items() if v.get()}
@@ -710,6 +681,15 @@ class MergeWindow:
             gui_log("已打开线上 Excel", self.status_var)
         else:
             messagebox.showwarning("提示", "文件不存在或无法打开")
+
+    def _open_main(self):
+        try:
+            from main_gui import open_main_window
+            open_main_window(parent=self.root, on_update_quit=self._on_cancel)
+            gui_log("已打开设置中心", self.status_var)
+        except Exception as e:
+            gui_log("打开设置中心失败: %s" % e, self.status_var, is_error=True)
+            messagebox.showerror("错误", "打开设置中心失败：%s" % e)
 
     def _current_backup_root(self):
         return (self.backup_root_var.get() if self.backup_root_var is not None else "").strip()
@@ -1302,15 +1282,6 @@ class MergeWindow:
         ttk.Button(btn_row, text="关闭", command=win.destroy).pack(side=tk.LEFT, padx=8)
 
     def _on_cancel(self):
-        global _merge_instance
-        release_merge_lock()
-        if _merge_instance is self:
-            _merge_instance = None
-        self.root.quit()
-        self.root.destroy()
-        sys.exit(1)
-
-    def _quit_for_update(self):
         global _merge_instance
         release_merge_lock()
         if _merge_instance is self:

@@ -17,7 +17,6 @@ from compare_core import get_compare_data, write_compare_excel
 from gui_common import (
     ToolTip,
     UI,
-    UpdateButtonController,
     apply_app_icon,
     configure_button_icon,
     gui_log,
@@ -25,7 +24,6 @@ from gui_common import (
     make_badge,
     make_color_legend,
     make_icon_button,
-    make_update_card,
     open_containing_folder,
     open_excel_file,
     setup_merge_styles,
@@ -145,8 +143,6 @@ class DiffWindow:
         self.path_b = path_b
         self.path_out = None
         self.diff_rows = []
-        self.update_controller = None
-        self.update_progress_var = None
         self._visible_diff_rows = []
         self._diff_page = 0
         self.diff_page_var = None
@@ -162,8 +158,6 @@ class DiffWindow:
         apply_app_icon(self.root)
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        if self.update_controller:
-            self.update_controller.start_background_check()
         _diff_instance = self
         self.root.after(80, self._start_compare_async)
 
@@ -308,39 +302,19 @@ class DiffWindow:
         self.title_var = tk.StringVar(self.root, value="本地 (A) vs 线上 (B)")
         ttk.Label(headline, textvariable=self.title_var, style="PanelTitle.TLabel").pack(side=tk.LEFT)
         make_badge(headline, "v%s" % APP_VERSION, "primary").pack(side=tk.LEFT, padx=(10, 0))
-        self.btn_update = make_icon_button(headline, self.root, "手动检查更新", "update", style="Tiny.TButton")
-        self.btn_update.pack(side=tk.LEFT, padx=(8, 0))
-        ToolTip(self.btn_update, "手动检查 GitHub Release 是否有新版本；exe 运行模式支持自动下载替换。")
+        self.btn_main = make_icon_button(headline, self.root, "设置中心", "app", command=self._open_main, style="Tiny.TButton")
+        self.btn_main.pack(side=tk.LEFT, padx=(8, 0))
+        ToolTip(self.btn_main, "打开设置中心，设置默认运行模式、备份目录、全局 Git 注入和程序更新。")
         ttk.Label(title_text, text="快速查看两个 Excel 的新增、删除和修改，并导出对比工作簿。", style="Muted.TLabel").pack(anchor=tk.W, pady=(2, 0))
         self.btn_swap = make_icon_button(title_row, self.root, "互换基准", "swap", command=self._on_swap_baseline, style="Secondary.TButton")
         self.btn_swap.pack(side=tk.LEFT, padx=(16, 10))
         ToolTip(self.btn_swap, "交换 A/B 基准并重新计算差异。")
-        (
-            update_card,
-            _update_card_button,
-            self.update_state_var,
-            self.update_state_label,
-            self.update_state_icon,
-            update_progress_row,
-            self.update_progress_var,
-            self.update_progress_label,
-            self.update_progress_bar,
-        ) = make_update_card(title_row, self.root, include_button=False)
-        update_card.pack(side=tk.RIGHT, fill=tk.Y)
-        self.update_controller = UpdateButtonController(
-            self.root, self.btn_update, status_var=self.status_var, on_quit=self._on_close, compact=True,
-        )
-        self.update_controller.bind_state_widget(self.update_state_var, self.update_state_label, self.update_state_icon)
         self.path_a_var = tk.StringVar(self.root)
         self.path_b_var = tk.StringVar(self.root)
         self.path_a_label = None
         self.path_b_label = None
         self.path_a_tip = None
         self.path_b_tip = None
-
-        self.update_controller.bind_progress_widgets(
-            self.update_progress_bar, self.update_progress_var, self.update_progress_label, update_progress_row,
-        )
 
         path_panel = ttk.Frame(top, style="Panel.TFrame")
         path_panel.pack(fill=tk.X, pady=(10, 0))
@@ -453,6 +427,15 @@ class DiffWindow:
         ok = open_containing_folder(path, select_file=True)
         if not ok:
             messagebox.showwarning("提示", "无法打开所在位置")
+
+    def _open_main(self):
+        try:
+            from main_gui import open_main_window
+            open_main_window(parent=self.root, on_update_quit=self._on_close)
+            gui_log("已打开设置中心", self.status_var)
+        except Exception as e:
+            gui_log("打开设置中心失败: %s" % e, self.status_var, is_error=True)
+            messagebox.showerror("错误", "打开设置中心失败：%s" % e)
 
     def _on_diff_filter_changed(self):
         """筛选勾选变化：持久化并刷新列表。"""

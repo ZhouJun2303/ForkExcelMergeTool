@@ -39,13 +39,13 @@ Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Too
 
 ### 2.2 全局 Git 合并驱动（可选）
 
-除了 Fork 外，也可以安装全局 Git merge driver，让普通 `git merge` 在遇到 `.xlsx` 文件级合并时调用本工具：
+除了 Fork 外，也可以安装全局 Git merge driver，让普通 `git merge` 在遇到常见 Excel 后缀文件级合并时调用本工具：
 
 ```text
 install_git_integration.bat
 ```
 
-这会写入用户级 Git 配置和 attributes，只匹配 `*.xlsx` / `*.XLSX`。driver 模式确认后只把结果写回 Git 传入的 `%A`，不会执行 `git add`，也不会删除 Git 管理的临时文件。卸载：
+这会写入用户级 Git 配置和 attributes，匹配 `.xls`、`.xlsx`、`.xlsm`、`.xlsb`、`.xlt`、`.xltx`、`.xltm`、`.xla`、`.xlam`、`.xlw` 等常见 Excel 后缀。快速备份模式可直接备份这些后缀；合并对比模式当前支持 `.xlsx`、`.xlsm`、`.xltx`、`.xltm`。driver 模式确认后只把结果写回 Git 传入的 `%A`，不会执行 `git add`，也不会删除 Git 管理的临时文件。卸载：
 
 ```text
 uninstall_git_integration.bat
@@ -57,7 +57,7 @@ uninstall_git_integration.bat
 
 ### 3.1 合并工具（解决 Excel 冲突）
 
-当 Git 合并产生冲突且冲突文件是 `.xlsx` 时，用本工具来选「保留本地」或「保留线上」。
+当 Git 合并产生冲突且冲突文件是 Excel 工作簿时，用本工具来选「保留本地」或「保留线上」。
 
 1. 打开 **Fork** → **Preferences（设置）** → **Integration** → **Merge Tool**。
 2. **Merger** 选 **Custom**。
