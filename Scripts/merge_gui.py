@@ -365,6 +365,17 @@ class MergeWindow:
         btn_backup_pick.pack(side=tk.LEFT)
         make_icon_button(backup_frame, self.root, "保存备份设置", "backup", command=self._on_save_backup_root, style="Secondary.TButton").pack(anchor=tk.W, pady=(6, 0))
         ToolTip(backup_entry, "留空时使用合并文件同目录下的 MergeExcelBackup。")
+        backup_actions = ttk.Frame(backup_frame, style="Panel.TFrame")
+        backup_actions.pack(fill=tk.X, pady=(10, 0))
+        self.btn_open_backup_merged = ttk.Button(backup_actions, text="打开备份文件", command=self._on_open_backup_merged, style="Secondary.TButton")
+        configure_button_icon(self.root, self.btn_open_backup_merged, "open")
+        self.btn_open_backup_merged.pack(fill=tk.X, pady=(0, 6))
+        self.btn_manual_backup = ttk.Button(backup_actions, text="手动保存备份", command=self._on_manual_save_backup, style="Secondary.TButton")
+        configure_button_icon(self.root, self.btn_manual_backup, "backup")
+        self.btn_manual_backup.pack(fill=tk.X, pady=(0, 6))
+        self.btn_open_backup_dir = ttk.Button(backup_actions, text="打开备份目录", command=self._on_open_backup_dir, style="Secondary.TButton")
+        configure_button_icon(self.root, self.btn_open_backup_dir, "folder")
+        self.btn_open_backup_dir.pack(fill=tk.X)
 
         preview_top = ttk.Frame(right_panel, style="Panel.TFrame")
         preview_top.pack(fill=tk.X)
@@ -442,17 +453,6 @@ class MergeWindow:
             command=lambda: _save_auto_open_merged(self.auto_open_var.get()),
         ).grid(row=0, column=3, sticky=tk.W, padx=(0, 12), pady=(0, 6))
         make_icon_button(btn_row, self.root, "取消", "cancel", command=self._on_cancel, style="Secondary.TButton").grid(row=0, column=4, sticky=tk.W, pady=(0, 6))
-        backup_btn_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
-        backup_btn_row.pack(fill=tk.X, pady=(0, 0))
-        self.btn_open_backup_merged = ttk.Button(backup_btn_row, text="打开备份文件", command=self._on_open_backup_merged)
-        configure_button_icon(self.root, self.btn_open_backup_merged, "open")
-        self.btn_open_backup_merged.pack(side=tk.LEFT, padx=(0, 8))
-        self.btn_manual_backup = ttk.Button(backup_btn_row, text="手动保存备份", command=self._on_manual_save_backup)
-        configure_button_icon(self.root, self.btn_manual_backup, "backup")
-        self.btn_manual_backup.pack(side=tk.LEFT, padx=(0, 8))
-        self.btn_open_backup_dir = ttk.Button(backup_btn_row, text="打开备份目录", command=self._on_open_backup_dir)
-        configure_button_icon(self.root, self.btn_open_backup_dir, "folder")
-        self.btn_open_backup_dir.pack(side=tk.LEFT)
     def _get_options(self):
         """返回当前勾选的选项集合 {"A","B",...}。"""
         return {k for k, v in self.option_vars.items() if v.get()}
