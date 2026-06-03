@@ -5,10 +5,12 @@ GUI 公共组件与样式：日志输出到文件并更新状态栏、颜色图�
 """
 
 import os
+import math
 import subprocess
 import sys
 import threading
 import tkinter as tk
+import time
 from tkinter import ttk, messagebox
 from datetime import datetime
 
@@ -356,6 +358,241 @@ def make_separator(parent):
     return line
 
 
+class GlobalBusyIndicator:
+    """Small overlay spinner shared by all GUI windows."""
+
+    def __init__(self, root):
+        self.root = root
+        self._tokens = {}
+        self._hide_after_id = None
+        self._spin_after_id = None
+        self._spin_step = 0
+        self._visible_since = 0.0
+        self._min_visible_ms = 260
+        self._frame = tk.Frame(root, bg=UI["border"], borderwidth=1, relief=tk.SOLID)
+        inner = ttk.Frame(self._frame, padding=(10, 6), style="Loading.TFrame")
+        inner.pack(fill=tk.BOTH, expand=True)
+        self._spinner = tk.Canvas(
+            inner,
+            width=22,
+            height=22,
+            bg=UI["panel"],
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self._spinner.pack(side=tk.LEFT)
+        self._label_var = tk.StringVar(root, value="处理中...")
+        ttk.Label(inner, textvariable=self._label_var, style="Loading.TLabel").pack(side=tk.LEFT, padx=(7, 0))
+
+    def pulse(self, text="处理中...", duration_ms=650):
+        token = ("click", id(object()), time.monotonic())
+        self.show(token, text)
+        try:
+            self.root.after(duration_ms, lambda t=token: self.hide(t))
+        except tk.TclError:
+            pass
+        return token
+
+    def set_task(self, key, busy, text="处理中..."):
+        token = ("task", key)
+        if busy:
+            self.show(token, text)
+        else:
+            self.hide(token)
+
+    def show(self, token, text="处理中..."):
+        if self._hide_after_id is not None:
+            try:
+                self.root.after_cancel(self._hide_after_id)
+            except tk.TclError:
+                pass
+            self._hide_after_id = None
+        self._tokens[token] = text or "处理中..."
+        self._label_var.set(self._tokens[token])
+        if not self._frame.winfo_ismapped():
+            self._visible_since = time.monotonic()
+            try:
+                self._frame.place(relx=1.0, x=-14, y=12, anchor=tk.NE)
+            except tk.TclError:
+                return
+        try:
+            self._frame.lift()
+            self.root.update_idletasks()
+            self._start_spin()
+        except tk.TclError:
+            pass
+
+    def hide(self, token=None):
+        if token is None:
+            self._tokens.clear()
+        else:
+            self._tokens.pop(token, None)
+        if self._tokens:
+            latest_text = list(self._tokens.values())[-1]
+            self._label_var.set(latest_text)
+            return
+        elapsed_ms = int((time.monotonic() - self._visible_since) * 1000)
+        delay = max(0, self._min_visible_ms - elapsed_ms)
+        if delay:
+            try:
+                self._hide_after_id = self.root.after(delay, self._hide_now)
+            except tk.TclError:
+                pass
+        else:
+            self._hide_now()
+
+    def _start_spin(self):
+        if self._spin_after_id is None:
+            self._draw_spinner()
+
+    def _draw_spinner(self):
+        if not self._frame.winfo_ismapped():
+            self._spin_after_id = None
+            return
+        try:
+            self._spinner.delete("all")
+            colors = ["#2563EB", "#3B82F6", "#60A5FA", "#93C5FD", "#BFDBFE", "#DBEAFE", "#E0E7FF", "#CBD5E1"]
+            cx = cy = 11
+            radius = 7
+            for i in range(8):
+                angle = (self._spin_step + i) * math.pi / 4.0
+                x = cx + math.cos(angle) * radius
+                y = cy + math.sin(angle) * radius
+                self._spinner.create_oval(x - 2, y - 2, x + 2, y + 2, fill=colors[i], outline="")
+            self._spin_step = (self._spin_step + 1) % 8
+            self._spin_after_id = self.root.after(80, self._draw_spinner)
+        except tk.TclError:
+            self._spin_after_id = None
+
+    def _hide_now(self):
+        self._hide_after_id = None
+        if self._tokens:
+            return
+        try:
+            self._frame.place_forget()
+            if self._spin_after_id is not None:
+                self.root.after_cancel(self._spin_after_id)
+            self._spin_after_id = None
+            self._spinner.delete("all")
+        except tk.TclError:
+            pass
+
+
+def get_global_busy_indicator(root):
+    indicator = getattr(root, "_excel_merge_global_busy", None)
+    if indicator is None:
+        indicator = GlobalBusyIndicator(root)
+        root._excel_merge_global_busy = indicator
+    return indicator
+
+
+def set_global_busy(root, key, busy, text=None):
+    try:
+        get_global_busy_indicator(root).set_task(key, busy, text or "处理中...")
+    except Exception:
+        pass
+
+
+def run_loading_task(root, key, text, worker_func, success_func, error_func=None):
+    """
+    Run a worker in the background while showing the shared loading indicator.
+
+    worker_func runs off the Tk thread. success_func/error_func run back on the
+    Tk thread after the loading token is released.
+    """
+    token = ("loading_task", key, id(worker_func), time.monotonic())
+    try:
+        get_global_busy_indicator(root).show(token, text or "处理中...")
+    except Exception:
+        pass
+
+    def finish(result=None, err=None):
+        try:
+            get_global_busy_indicator(root).hide(token)
+        except Exception:
+            pass
+        if err is None:
+            if success_func is not None:
+                success_func(result)
+            return
+        if error_func is not None:
+            error_func(err)
+        else:
+            messagebox.showerror("错误", str(err))
+
+    def worker():
+        result = None
+        err = None
+        try:
+            result = worker_func()
+        except Exception as exc:
+            err = exc
+        try:
+            root.after(0, lambda result=result, err=err: finish(result, err))
+        except Exception:
+            pass
+
+    threading.Thread(target=worker, daemon=True).start()
+    return token
+
+
+def install_global_button_loading(root):
+    """Show a short global spinner whenever a Tk/ttk button is pressed."""
+    try:
+        if root.tk.getvar("excel_merge_loading_bind_installed") == "1":
+            return
+    except tk.TclError:
+        pass
+
+    def _button_finished(widget, expected_token=None):
+        try:
+            token = getattr(widget, "_excel_merge_loading_token", None)
+            if token is None or (expected_token is not None and token != expected_token):
+                return
+            widget._excel_merge_loading_token = None
+            indicator = getattr(widget, "_excel_merge_loading_indicator", None)
+            if indicator is not None:
+                indicator.hide(token)
+        except Exception:
+            pass
+
+    def _button_pressed(event):
+        widget = getattr(event, "widget", None)
+        if widget is None:
+            return
+        try:
+            if hasattr(widget, "state") and "disabled" in widget.state():
+                return
+            if str(widget.cget("state")) == tk.DISABLED:
+                return
+        except Exception:
+            pass
+        try:
+            top = widget.winfo_toplevel()
+            indicator = get_global_busy_indicator(top)
+            token = ("button", id(widget), time.monotonic())
+            widget._excel_merge_loading_token = token
+            widget._excel_merge_loading_indicator = indicator
+            indicator.show(token, "处理中...")
+            top.after(30000, lambda w=widget, t=token: _button_finished(w, t))
+        except Exception:
+            pass
+
+    def _button_released(event):
+        widget = getattr(event, "widget", None)
+        if widget is not None:
+            _button_finished(widget)
+
+    root.bind_class("TButton", "<ButtonPress-1>", _button_pressed, add="+")
+    root.bind_class("Button", "<ButtonPress-1>", _button_pressed, add="+")
+    root.bind_class("TButton", "<ButtonRelease-1>", _button_released, add="+")
+    root.bind_class("Button", "<ButtonRelease-1>", _button_released, add="+")
+    try:
+        root.tk.setvar("excel_merge_loading_bind_installed", "1")
+    except tk.TclError:
+        pass
+
+
 class ToolTip:
     """轻量 tooltip，避免引入额外依赖。"""
 
@@ -489,6 +726,7 @@ def setup_merge_styles(root):
     style.configure("Panel.TFrame", background=panel, relief=tk.FLAT)
     style.configure("Card.TFrame", background=UI["panel_alt"], relief=tk.FLAT)
     style.configure("UpdateCard.TFrame", background=UI["panel_alt"], relief=tk.FLAT)
+    style.configure("Loading.TFrame", background=panel, relief=tk.FLAT)
     style.configure("Toolbar.TFrame", background=panel)
     style.configure("BottomBar.TFrame", background=panel)
     style.configure("TLabel", background=bg, foreground=fg, font=ui_font(9))
@@ -505,6 +743,7 @@ def setup_merge_styles(root):
     style.configure("UpdateReady.TLabel", background=UI["panel_alt"], foreground=UI["success"], font=ui_font(8, "bold"))
     style.configure("UpdateError.TLabel", background=UI["panel_alt"], foreground=UI["danger"], font=ui_font(8, "bold"))
     style.configure("Muted.TLabel", background=panel, foreground=muted, font=ui_font(8))
+    style.configure("Loading.TLabel", background=panel, foreground=fg, font=ui_font(9, "bold"))
     style.configure("Title.TLabel", background=bg, foreground=fg, font=ui_font(16, "bold"))
     style.configure("PanelTitle.TLabel", background=panel, foreground=fg, font=ui_font(16, "bold"))
     style.configure("Subtitle.TLabel", background=bg, foreground=muted, font=ui_font(9))
@@ -623,14 +862,18 @@ class UpdateButtonController:
         self._set_progress_visible(True, mode="indeterminate", text="检查更新中...")
 
         def worker():
-            try:
-                info = check_for_update()
-                remember_update_check(info)
-                self.root.after(0, lambda: self._set_check_result(info, silent=True))
-            except Exception as e:
-                self.root.after(0, lambda err=e: self._set_check_error(err, silent=True))
+            info = check_for_update()
+            remember_update_check(info)
+            return info
 
-        threading.Thread(target=worker, daemon=True).start()
+        run_loading_task(
+            self.root,
+            "update_check_worker",
+            "正在检查更新...",
+            worker,
+            lambda info: self._set_check_result(info, silent=True),
+            lambda err: self._set_check_error(err, silent=True),
+        )
 
     def on_click(self):
         if self.installing:
@@ -654,14 +897,18 @@ class UpdateButtonController:
         gui_log("正在检查更新...", self.status_var)
 
         def worker():
-            try:
-                info = check_for_update()
-                remember_update_check(info)
-                self.root.after(0, lambda: self._set_check_result(info, silent=False))
-            except Exception as e:
-                self.root.after(0, lambda err=e: self._set_check_error(err, silent=False))
+            info = check_for_update()
+            remember_update_check(info)
+            return info
 
-        threading.Thread(target=worker, daemon=True).start()
+        run_loading_task(
+            self.root,
+            "update_check_worker",
+            "正在检查更新...",
+            worker,
+            lambda info: self._set_check_result(info, silent=False),
+            lambda err: self._set_check_error(err, silent=False),
+        )
 
     def _apply_cached_info(self):
         info = cached_update_info()
@@ -728,17 +975,20 @@ class UpdateButtonController:
         gui_log("正在下载 v%s..." % info.get("latest_version"), self.status_var)
 
         def worker():
-            try:
-                def on_progress(downloaded, total):
-                    self.root.after(0, lambda d=downloaded, t=total: self._update_download_progress(d, t))
+            def on_progress(downloaded, total):
+                self.root.after(0, lambda d=downloaded, t=total: self._update_download_progress(d, t))
 
-                new_exe = download_update(info, progress_callback=on_progress)
-                script = make_update_script(new_exe, target, restart_after=False)
-                self.root.after(0, lambda: self._finish_install(script))
-            except Exception as e:
-                self.root.after(0, lambda err=e: self._install_error(err))
+            new_exe = download_update(info, progress_callback=on_progress)
+            return make_update_script(new_exe, target, restart_after=False)
 
-        threading.Thread(target=worker, daemon=True).start()
+        run_loading_task(
+            self.root,
+            "update_install_worker",
+            "正在下载更新...",
+            worker,
+            self._finish_install,
+            self._install_error,
+        )
 
     def _finish_install(self, script):
         self.installing = False

@@ -12,6 +12,7 @@ import tempfile
 import traceback
 from dataclasses import dataclass, field
 
+from git_util import discover_git_worktree_root
 from log_util import log, release_merge_lock, try_acquire_merge_lock
 
 
@@ -88,17 +89,9 @@ def _resolve_context_path(path_current, repo_path):
 
 
 def _git_root(cwd):
-    import subprocess
-
-    r = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    if r.returncode == 0 and r.stdout.strip():
-        return r.stdout.strip()
+    root, _ = discover_git_worktree_root(cwd)
+    if root:
+        return root
     return cwd
 
 

@@ -1,0 +1,12 @@
+{
+  "checked_at": 1780461054.0756,
+  "info": {
+    "available": false,
+    "current_version": "2.66",
+    "latest_version": "2.56",
+    "html_url": "https://github.com/ZhouJun2303/ForkExcelMergeTool/releases/tag/v2.56",
+    "body": "ExcelMergeFork v2.56\n\n- Windows 单文件版: ExcelMergeFork.exe\n- SHA256: 见 ExcelMergeFork.exe.sha256",
+    "published_at": "2026-05-29T06:31:32Z",
+    "missing_asset": false
+  }
+}

@@ -7,10 +7,10 @@ import json
 import os
 import re
 import shutil
-import subprocess
 from datetime import datetime
 
 from config import BACKUP_SUBDIR
+from git_util import discover_git_worktree_root
 from log_util import merge_options_path
 
 
@@ -70,18 +70,9 @@ def project_name_for_backup(path_merged):
     """优先使用 Git 仓库目录名；不在仓库中时使用 MERGED 所在目录名。"""
     merged_dir = os.path.dirname(os.path.abspath(path_merged)) or os.getcwd()
     project_dir = merged_dir
-    try:
-        r = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=merged_dir,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            project_dir = r.stdout.strip()
-    except Exception:
-        pass
+    repo_root, _ = discover_git_worktree_root(merged_dir)
+    if repo_root:
+        project_dir = repo_root
     return _sanitize_dir_name(os.path.basename(os.path.normpath(project_dir)), "Project")
 
 

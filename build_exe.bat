@@ -2,12 +2,13 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
-REM 参数：--gui 无控制台窗口，--test 打包后跑测试
-set "WINMODE=--console"
+REM 参数：默认无控制台窗口；--console 用于调试；--test 打包后跑测试
+set "WINMODE=--windowed"
 set "RUN_TEST=0"
 :parse
 if "%~1"=="" goto done_parse
 if /i "%~1"=="--gui" set "WINMODE=--windowed"
+if /i "%~1"=="--console" set "WINMODE=--console"
 if /i "%~1"=="--test" set "RUN_TEST=1"
 shift
 goto parse

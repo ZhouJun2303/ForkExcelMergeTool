@@ -3,10 +3,10 @@ setlocal enabledelayedexpansion
 chcp 65001 >nul
 cd /d "%~dp0"
 
-REM Options: --gui for windowed exe, --test to run tests, --dist/no-test/skip to skip tests.
+REM Options: default builds a windowed exe. Use --console for debug console, --test to run tests, --dist/no-test/skip to skip tests.
 REM --python-zip also creates a lightweight source zip for machines with Python installed.
 REM --release also publishes a GitHub Release after a successful package.
-set "WINMODE=--console"
+set "WINMODE=--windowed"
 set "RUN_TEST=1"
 set "PUBLISH_RELEASE=0"
 set "BUILD_PYTHON_ZIP=0"
@@ -15,6 +15,7 @@ set "TEST_FAILED=0"
 :parse
 if "%~1"=="" goto done_parse
 if /i "%~1"=="--gui" set "WINMODE=--windowed"
+if /i "%~1"=="--console" set "WINMODE=--console"
 if /i "%~1"=="--test" set "RUN_TEST=1"
 if /i "%~1"=="--dist" set "RUN_TEST=0"
 if /i "%~1"=="--python-zip" set "BUILD_PYTHON_ZIP=1"
@@ -83,7 +84,7 @@ if "%RUN_TEST%"=="1" (
 echo.
 echo ========== Package Complete ==========
 echo Artifact: %CD%\ExcelMergeFork.exe
-echo Options: --gui windowed exe  --test run tests  --dist skip tests  --python-zip lightweight Python package  --release publish GitHub Release
+echo Options: --console debug console  --test run tests  --dist skip tests  --python-zip lightweight Python package  --release publish GitHub Release
 echo.
 
 if "%BUILD_PYTHON_ZIP%"=="1" (

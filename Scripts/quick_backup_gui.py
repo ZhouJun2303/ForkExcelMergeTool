@@ -11,6 +11,7 @@ from gui_common import (
     ToolTip,
     apply_app_icon,
     gui_log,
+    install_global_button_loading,
     make_badge,
     make_header_icon,
     make_icon_button,
@@ -43,6 +44,7 @@ class QuickBackupWindow:
         apply_app_icon(self.root)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
+        install_global_button_loading(self.root)
 
     def _build_ui(self):
         pad = 16

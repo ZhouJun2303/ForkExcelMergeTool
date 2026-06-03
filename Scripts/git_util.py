@@ -15,6 +15,11 @@ from config import BACKUP_SUBDIR
 from log_util import log
 
 
+GIT_DISCOVERY_TIMEOUT = 15
+GIT_ADD_TIMEOUT = 30
+GIT_CLEANUP_TIMEOUT = 15
+
+
 @dataclass
 class CompletionResult:
     """合并确认动作的结构化结果。"""
@@ -74,6 +79,57 @@ def _path_inside(path, root):
         return False
 
 
+def _find_git_marker_root(start_path):
+    """Walk upward and return the nearest worktree root containing a .git marker."""
+    try:
+        current = os.path.abspath(start_path or os.getcwd())
+        if os.path.isfile(current):
+            current = os.path.dirname(current)
+    except Exception:
+        current = os.getcwd()
+
+    while current:
+        marker = os.path.join(current, ".git")
+        if os.path.isdir(marker) or os.path.isfile(marker):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return None
+
+
+def discover_git_worktree_root(start_path, timeout=GIT_DISCOVERY_TIMEOUT):
+    """
+    Return (repo_root, error_message).
+
+    Prefer the local .git marker so confirmation is not blocked by slow
+    `git rev-parse` calls in Windows GUI/Fork environments.
+    """
+    marker_root = _find_git_marker_root(start_path)
+    if marker_root:
+        return os.path.abspath(marker_root), None
+
+    try:
+        cwd = os.path.abspath(start_path or os.getcwd())
+        if os.path.isfile(cwd):
+            cwd = os.path.dirname(cwd)
+        if not os.path.isdir(cwd):
+            cwd = os.getcwd()
+        rr = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if rr.returncode == 0 and rr.stdout.strip():
+            return os.path.abspath(rr.stdout.strip()), None
+        return None, "git rev-parse 失败，无法确认仓库根目录: %s" % (rr.stderr or rr.stdout or "未知")
+    except Exception as e:
+        return None, "无法执行 git rev-parse: %s" % e
+
+
 def stage_merged_and_cleanup(path_merged, path_local, path_base, path_remote, log_callback=None, cleanup_policy=None):
     """
     解决冲突后：
@@ -96,22 +152,8 @@ def stage_merged_and_cleanup(path_merged, path_local, path_base, path_remote, lo
     if not work_dir:
         work_dir = "."
     abs_merged = os.path.abspath(path_merged)
-    try:
-        rr = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=work_dir,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if rr.returncode != 0 or not rr.stdout.strip():
-            msg = "git rev-parse 失败，无法确认仓库根目录: %s" % (rr.stderr or rr.stdout or "未知")
-            result.errors.append(msg)
-            _log_cb(msg, True)
-            return result
-        repo_root = os.path.abspath(rr.stdout.strip())
-    except Exception as e:
-        msg = "无法执行 git rev-parse: %s" % e
+    repo_root, msg = discover_git_worktree_root(work_dir)
+    if not repo_root:
         result.errors.append(msg)
         _log_cb(msg, True)
         return result
@@ -130,7 +172,7 @@ def stage_merged_and_cleanup(path_merged, path_local, path_base, path_remote, lo
             cwd=repo_root,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=GIT_ADD_TIMEOUT,
         )
         if r.returncode == 0:
             result.staged = True
@@ -173,7 +215,7 @@ def stage_merged_and_cleanup(path_merged, path_local, path_base, path_remote, lo
         bp_rel = os.path.relpath(bp, repo_root).replace("\\", "/")
         try:
             if _path_inside(bp, repo_root):
-                r = subprocess.run(["git", "rm", "-f", "--", bp_rel], cwd=repo_root, capture_output=True, text=True, timeout=5)
+                r = subprocess.run(["git", "rm", "-f", "--", bp_rel], cwd=repo_root, capture_output=True, text=True, timeout=GIT_CLEANUP_TIMEOUT)
                 if r.returncode == 0:
                     result.cleaned.append(bp)
                     _log_cb("已删除备份(含从 git 移除): %s" % bp)

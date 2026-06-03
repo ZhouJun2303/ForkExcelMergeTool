@@ -27,12 +27,15 @@ from gui_common import (
     UpdateButtonController,
     apply_app_icon,
     gui_log,
+    install_global_button_loading,
     make_badge,
     make_header_icon,
     make_icon_button,
     make_separator,
     make_update_card,
     open_containing_folder,
+    run_loading_task,
+    set_global_busy,
     setup_merge_styles,
 )
 from version import __version__ as APP_VERSION
@@ -79,6 +82,8 @@ class MainWindow:
         self.backup_root_var = tk.StringVar(self.root, value=load_saved_backup_root())
         self.git_status_var = tk.StringVar(self.root, value="")
         self.git_detail_var = tk.StringVar(self.root, value="")
+        self.git_progress_var = tk.IntVar(self.root, value=0)
+        self.git_busy = False
         self.update_controller = None
         self.root.title("ExcelMergeFork 设置中心 v%s" % APP_VERSION)
         self.root.minsize(780, 620)
@@ -89,6 +94,7 @@ class MainWindow:
             self.root.transient(parent)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
+        install_global_button_loading(self.root)
         self._refresh_git_status()
         if self.update_controller:
             self.update_controller.start_background_check()
@@ -185,9 +191,17 @@ class MainWindow:
         ttk.Label(left, textvariable=self.git_detail_var, style="Muted.TLabel", wraplength=430).pack(anchor=tk.W, pady=(2, 0))
         git_btn_row = ttk.Frame(left, style="Panel.TFrame")
         git_btn_row.pack(fill=tk.X, pady=(8, 0))
-        make_icon_button(git_btn_row, self.root, "安装注入", "check", command=self._install_git_integration, style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 8))
-        make_icon_button(git_btn_row, self.root, "移除注入", "cancel", command=self._uninstall_git_integration, style="Secondary.TButton").pack(side=tk.LEFT, padx=(0, 8))
-        make_icon_button(git_btn_row, self.root, "刷新状态", "refresh", command=self._refresh_git_status, style="Secondary.TButton").pack(side=tk.LEFT)
+        self.btn_git_install = make_icon_button(git_btn_row, self.root, "安装注入", "check", command=self._install_git_integration, style="Secondary.TButton")
+        self.btn_git_install.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_git_uninstall = make_icon_button(git_btn_row, self.root, "移除注入", "cancel", command=self._uninstall_git_integration, style="Secondary.TButton")
+        self.btn_git_uninstall.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_git_refresh = make_icon_button(git_btn_row, self.root, "刷新状态", "refresh", command=self._refresh_git_status, style="Secondary.TButton")
+        self.btn_git_refresh.pack(side=tk.LEFT)
+        self.git_progress_row = ttk.Frame(left, style="Panel.TFrame")
+        self.git_progress_label = ttk.Label(self.git_progress_row, text="", style="Muted.TLabel")
+        self.git_progress_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.git_progress_bar = ttk.Progressbar(self.git_progress_row, variable=self.git_progress_var, mode="indeterminate", length=180)
+        self.git_progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         (
             update_card,
@@ -275,8 +289,15 @@ class MainWindow:
             messagebox.showwarning("提示", "无法打开备份目录")
 
     def _refresh_git_status(self):
+        if self.git_busy:
+            return
+        self._run_git_task("正在刷新注入状态...", self._read_git_status, self._finish_git_refresh)
+
+    def _read_git_status(self):
+        return integration_status()
+
+    def _apply_git_status(self, status):
         try:
-            status = integration_status()
             exe_path = current_executable_path()
             if not status.get("git_available"):
                 self.git_status_var.set("状态：未检测到 git 命令")
@@ -294,6 +315,10 @@ class MainWindow:
             self.git_status_var.set("状态：读取失败")
             self.git_detail_var.set(str(e))
 
+    def _finish_git_refresh(self, status):
+        self._apply_git_status(status)
+        gui_log("全局 Git 注入状态已刷新", self.status_var)
+
     def _install_git_integration(self):
         exe_path = current_executable_path()
         if not os.path.isfile(exe_path):
@@ -308,28 +333,73 @@ class MainWindow:
             "这会写入用户级 Git 配置，并让所有 Git 工具在常见 Excel 后缀冲突时调用：\n%s\n\n快速备份模式可直接备份这些文件；合并对比模式依赖当前 Excel 解析能力。" % exe_path,
         ):
             return
-        try:
-            install_global_integration(exe_path)
-            gui_log("已安装全局 Git 注入", self.status_var)
-            self._refresh_git_status()
-            messagebox.showinfo("已安装", "全局 Git 注入已安装。之后常见 Excel 后缀冲突会自动打开本工具。")
-        except Exception as e:
-            gui_log("安装全局 Git 注入失败: %s" % e, self.status_var, is_error=True)
-            self._refresh_git_status()
-            messagebox.showerror("安装失败", str(e))
+        self._run_git_task(
+            "正在安装全局 Git 注入...",
+            lambda: install_global_integration(exe_path),
+            self._finish_git_install,
+            error_title="安装失败",
+        )
 
     def _uninstall_git_integration(self):
         if not messagebox.askokcancel("移除全局 Git 注入", "这会移除 ExcelMergeFork 写入的用户级 Git 配置和 attributes 条目。"):
             return
-        try:
-            uninstall_global_integration()
-            gui_log("已移除全局 Git 注入", self.status_var)
-            self._refresh_git_status()
-            messagebox.showinfo("已移除", "全局 Git 注入已移除。")
-        except Exception as e:
-            gui_log("移除全局 Git 注入失败: %s" % e, self.status_var, is_error=True)
-            self._refresh_git_status()
-            messagebox.showerror("移除失败", str(e))
+        self._run_git_task(
+            "正在移除全局 Git 注入...",
+            uninstall_global_integration,
+            self._finish_git_uninstall,
+            error_title="移除失败",
+        )
+
+    def _finish_git_install(self, status):
+        self._apply_git_status(status)
+        gui_log("已安装全局 Git 注入", self.status_var)
+        messagebox.showinfo("已安装", "全局 Git 注入已安装。之后常见 Excel 后缀冲突会自动打开本工具。")
+
+    def _finish_git_uninstall(self, status):
+        self._apply_git_status(status)
+        gui_log("已移除全局 Git 注入", self.status_var)
+        messagebox.showinfo("已移除", "全局 Git 注入已移除。")
+
+    def _set_git_busy(self, busy, text=""):
+        self.git_busy = busy
+        set_global_busy(self.root, "git_integration", busy, text or "正在处理 Git 注入...")
+        state = tk.DISABLED if busy else tk.NORMAL
+        for btn in (getattr(self, "btn_git_install", None), getattr(self, "btn_git_uninstall", None), getattr(self, "btn_git_refresh", None)):
+            if btn is not None:
+                btn.config(state=state)
+        if busy:
+            self.git_status_var.set(text)
+            self.git_progress_label.config(text=text)
+            self.git_progress_row.pack(fill=tk.X, pady=(8, 0))
+            self.git_progress_bar.start(12)
+        else:
+            self.git_progress_bar.stop()
+            self.git_progress_var.set(0)
+            self.git_progress_label.config(text="")
+            self.git_progress_row.pack_forget()
+
+    def _run_git_task(self, busy_text, worker_func, success_func, error_title="操作失败"):
+        if self.git_busy:
+            return
+        self._set_git_busy(True, busy_text)
+        run_loading_task(
+            self.root,
+            "git_integration_worker",
+            busy_text,
+            worker_func,
+            lambda result: self._finish_git_task(result, success_func),
+            lambda err: self._finish_git_task_error(err, error_title),
+        )
+
+    def _finish_git_task(self, result, success_func):
+        self._set_git_busy(False)
+        success_func(result)
+
+    def _finish_git_task_error(self, err, error_title):
+        self._set_git_busy(False)
+        gui_log("%s: %s" % (error_title, err), self.status_var, is_error=True)
+        self.git_status_var.set("状态：操作失败，请稍后刷新")
+        messagebox.showerror(error_title, str(err))
 
     def activate(self):
         self.root.lift()

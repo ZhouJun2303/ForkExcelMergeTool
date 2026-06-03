@@ -8,7 +8,6 @@ import json
 import os
 import re
 import sys
-import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -37,6 +36,7 @@ from gui_common import (
     apply_app_icon,
     configure_button_icon,
     gui_log,
+    install_global_button_loading,
     make_header_icon,
     make_badge,
     make_color_legend,
@@ -44,6 +44,8 @@ from gui_common import (
     make_separator,
     open_excel_file,
     open_containing_folder,
+    run_loading_task,
+    set_global_busy,
     setup_merge_styles,
 )
 from git_util import get_git_merge_info, stage_merged_and_cleanup
@@ -201,6 +203,7 @@ class MergeWindow:
 
         self.local_info, self.remote_info = get_git_merge_info(path_merged)
         self._build_ui()
+        install_global_button_loading(self.root)
         self._schedule_preview_refresh()
 
     def _build_ui(self):
@@ -384,7 +387,7 @@ class MergeWindow:
         table_frame.grid_rowconfigure(0, weight=1)
         table_frame.grid_columnconfigure(0, weight=1)
         cols = ("Sheet", "Key / 说明", "处理方式")
-        self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=14)
+        self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=10)
         for c, w, min_w, stretch in (
             ("Sheet", 150, 110, False),
             ("Key / 说明", 420, 260, True),
@@ -420,26 +423,27 @@ class MergeWindow:
 
         status_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
         status_row.pack(fill=tk.X)
-        ttk.Label(status_row, textvariable=self.status_var, style="Panel.TLabel").pack(side=tk.LEFT, anchor=tk.W)
+        ttk.Label(status_row, textvariable=self.status_var, style="Panel.TLabel", wraplength=900).pack(side=tk.LEFT, anchor=tk.W, fill=tk.X, expand=True)
         btn_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
         btn_row.pack(fill=tk.X, pady=(8, 0))
+        btn_row.columnconfigure(6, weight=1)
         self.btn_merge = ttk.Button(btn_row, text="生成合并结果", command=self._on_generate_merge, style="Accent.TButton")
         configure_button_icon(self.root, self.btn_merge, "merge")
-        self.btn_merge.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_merge.grid(row=0, column=0, sticky=tk.W, padx=(0, 8), pady=(0, 6))
         self.btn_confirm = ttk.Button(btn_row, text="确认无误并解决冲突", command=self._on_confirm_done)
         configure_button_icon(self.root, self.btn_confirm, "check")
-        self.btn_confirm.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_confirm.grid(row=0, column=1, sticky=tk.W, padx=(0, 8), pady=(0, 6))
         self.btn_confirm.config(state=tk.DISABLED)
         self.btn_open_merged = ttk.Button(btn_row, text="打开合并结果", command=self._on_open_merged)
         configure_button_icon(self.root, self.btn_open_merged, "open")
-        self.btn_open_merged.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_open_merged.grid(row=0, column=2, sticky=tk.W, padx=(0, 8), pady=(0, 6))
         ttk.Checkbutton(
             btn_row, text="合并后自动打开", variable=self.auto_open_var,
             command=lambda: _save_auto_open_merged(self.auto_open_var.get()),
-        ).pack(side=tk.LEFT, padx=(0, 12))
-        make_icon_button(btn_row, self.root, "取消", "cancel", command=self._on_cancel, style="Secondary.TButton").pack(side=tk.LEFT)
+        ).grid(row=0, column=3, sticky=tk.W, padx=(0, 12), pady=(0, 6))
+        make_icon_button(btn_row, self.root, "取消", "cancel", command=self._on_cancel, style="Secondary.TButton").grid(row=0, column=4, sticky=tk.W, pady=(0, 6))
         backup_btn_row = ttk.Frame(bottom_bar, style="BottomBar.TFrame")
-        backup_btn_row.pack(fill=tk.X, pady=(6, 0))
+        backup_btn_row.pack(fill=tk.X, pady=(0, 0))
         self.btn_open_backup_merged = ttk.Button(backup_btn_row, text="打开备份文件", command=self._on_open_backup_merged)
         configure_button_icon(self.root, self.btn_open_backup_merged, "open")
         self.btn_open_backup_merged.pack(side=tk.LEFT, padx=(0, 8))
@@ -487,6 +491,7 @@ class MergeWindow:
 
     def _set_preview_busy(self, busy, text=None):
         self._preview_loading = busy
+        set_global_busy(self.root, "merge_preview", busy, text or "正在计算预览...")
         state = tk.DISABLED if busy else tk.NORMAL
         if hasattr(self, "btn_merge") and self.btn_merge is not None and not self._merge_generating:
             self.btn_merge.config(state=state)
@@ -495,6 +500,7 @@ class MergeWindow:
 
     def _set_merge_generation_busy(self, busy, text=None):
         self._merge_generating = busy
+        set_global_busy(self.root, "merge_generation", busy, text or "正在生成合并结果...")
         merge_state = tk.DISABLED if busy or self._preview_loading else tk.NORMAL
         if hasattr(self, "btn_merge") and self.btn_merge is not None:
             self.btn_merge.config(state=merge_state)
@@ -534,15 +540,17 @@ class MergeWindow:
             self.summary_var.set("正在计算差异预览...")
 
         def worker():
-            try:
-                result = build_merge_preview(
-                    self.path_local, self.path_base, self.path_remote, options, base_side
-                )
-            except Exception as e:
-                result = {"error": e}
-            self.root.after(0, lambda: self._finish_preview_refresh(request_id, cache_key, result))
+            return build_merge_preview(
+                self.path_local, self.path_base, self.path_remote, options, base_side
+            )
 
-        threading.Thread(target=worker, daemon=True).start()
+        def success(result):
+            self._finish_preview_refresh(request_id, cache_key, result)
+
+        def failure(err):
+            self._finish_preview_refresh(request_id, cache_key, {"error": err})
+
+        run_loading_task(self.root, "merge_preview_worker", "正在计算预览...", worker, success, failure)
 
     def _finish_preview_refresh(self, request_id, cache_key, result):
         if request_id != self._preview_request_id:
@@ -831,28 +839,25 @@ class MergeWindow:
         gui_log("后台生成合并结果已开始。", self.status_var)
 
         def worker():
-            try:
-                code = do_merge(
-                    self.path_local, self.path_base, self.path_remote, self.path_merged,
-                    base_side=base_side, d_choices=d_choices if d_choices else None,
-                    options=options, backup_root=backup_root,
-                    backup_context_path=backup_context_path,
-                )
-                if code != 0:
-                    raise RuntimeError("合并返回码 %d" % code)
-                result = {
-                    "merged_file": os.path.normpath(os.path.abspath(self.path_merged)),
-                    "backup_info": getattr(do_merge, "last_backup_info", None),
-                }
-            except Exception as e:
-                import traceback
-                result = {"error": e, "traceback": traceback.format_exc()}
-            try:
-                self.root.after(0, lambda: self._finish_generate_merge(result))
-            except Exception:
-                pass
+            code = do_merge(
+                self.path_local, self.path_base, self.path_remote, self.path_merged,
+                base_side=base_side, d_choices=d_choices if d_choices else None,
+                options=options, backup_root=backup_root,
+                backup_context_path=backup_context_path,
+            )
+            if code != 0:
+                raise RuntimeError("合并返回码 %d" % code)
+            return {
+                "merged_file": os.path.normpath(os.path.abspath(self.path_merged)),
+                "backup_info": getattr(do_merge, "last_backup_info", None),
+            }
 
-        threading.Thread(target=worker, daemon=True).start()
+        def failure(err):
+            import traceback
+            tb = "".join(traceback.format_exception(type(err), err, err.__traceback__))
+            self._finish_generate_merge({"error": err, "traceback": tb})
+
+        run_loading_task(self.root, "merge_generation_worker", "正在后台生成合并结果...", worker, self._finish_generate_merge, failure)
 
     def _finish_generate_merge(self, result):
         self._set_merge_generation_busy(False, "合并结果已生成" if not result.get("error") else "合并失败")

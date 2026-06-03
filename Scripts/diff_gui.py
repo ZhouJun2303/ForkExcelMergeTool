@@ -7,7 +7,6 @@ import json
 import os
 import re
 import sys
-import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -20,12 +19,15 @@ from gui_common import (
     apply_app_icon,
     configure_button_icon,
     gui_log,
+    install_global_button_loading,
     make_header_icon,
     make_badge,
     make_color_legend,
     make_icon_button,
     open_containing_folder,
     open_excel_file,
+    run_loading_task,
+    set_global_busy,
     setup_merge_styles,
 )
 from log_util import log
@@ -157,6 +159,7 @@ class DiffWindow:
         setup_merge_styles(self.root)
         apply_app_icon(self.root)
         self._build_ui()
+        install_global_button_loading(self.root)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         _diff_instance = self
         self.root.after(80, self._start_compare_async)
@@ -198,6 +201,7 @@ class DiffWindow:
 
     def _set_compare_busy(self, busy, text=None):
         self._compare_running = busy
+        set_global_busy(self.root, "diff_compare", busy, text or "正在计算差异...")
         state = tk.DISABLED if busy else tk.NORMAL
         if hasattr(self, "btn_swap"):
             self.btn_swap.config(state=state)
@@ -221,29 +225,31 @@ class DiffWindow:
 
         def worker():
             started = time.time()
-            try:
-                out_dir = os.path.dirname(os.path.abspath(path_a))
-                base_name = os.path.splitext(os.path.basename(path_a))[0]
-                from config import COMPARE_SUFFIX
-                expected_out = os.path.join(out_dir, base_name + COMPARE_SUFFIX + ".xlsx")
-                is_temp = "Temp" in path_a or "Fork" in path_a or "tmp" in path_a.lower()
-                path_out, sheet_names, diff_rows = get_compare_data(path_a, path_b, include_same=False)
-                if path_out is None:
-                    raise RuntimeError("get_compare_data 失败")
-                write_compare_excel(path_out, sheet_names, diff_rows, open_file=False)
-                elapsed_ms = int((time.time() - started) * 1000)
-                result = {
-                    "path_out": path_out or expected_out,
-                    "sheet_names": sheet_names,
-                    "diff_rows": diff_rows,
-                    "is_temp": is_temp,
-                    "elapsed_ms": elapsed_ms,
-                }
-            except Exception as e:
-                result = {"error": e}
-            self.root.after(0, lambda: self._finish_compare(request_id, result))
+            out_dir = os.path.dirname(os.path.abspath(path_a))
+            base_name = os.path.splitext(os.path.basename(path_a))[0]
+            from config import COMPARE_SUFFIX
+            expected_out = os.path.join(out_dir, base_name + COMPARE_SUFFIX + ".xlsx")
+            is_temp = "Temp" in path_a or "Fork" in path_a or "tmp" in path_a.lower()
+            path_out, sheet_names, diff_rows = get_compare_data(path_a, path_b, include_same=False)
+            if path_out is None:
+                raise RuntimeError("get_compare_data 失败")
+            write_compare_excel(path_out, sheet_names, diff_rows, open_file=False)
+            elapsed_ms = int((time.time() - started) * 1000)
+            return {
+                "path_out": path_out or expected_out,
+                "sheet_names": sheet_names,
+                "diff_rows": diff_rows,
+                "is_temp": is_temp,
+                "elapsed_ms": elapsed_ms,
+            }
 
-        threading.Thread(target=worker, daemon=True).start()
+        def success(result):
+            self._finish_compare(request_id, result)
+
+        def failure(err):
+            self._finish_compare(request_id, {"error": err})
+
+        run_loading_task(self.root, "diff_compare_worker", "正在计算差异...", worker, success, failure)
 
     def _finish_compare(self, request_id, result):
         if request_id != self._compare_request_id:

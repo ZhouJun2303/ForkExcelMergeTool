@@ -292,6 +292,70 @@ def test_git_cleanup_policy_does_not_delete_repo_paths(out_dir):
     _assert(not policy.allows(real_file), "repo path containing fork/temp words must not be treated as temp")
 
 
+def test_git_root_discovery_uses_marker_before_rev_parse(out_dir):
+    import git_util
+
+    repo_path = os.path.join(out_dir, "marker_repo")
+    nested_path = os.path.join(repo_path, "a", "b")
+    os.makedirs(os.path.join(repo_path, ".git"), exist_ok=True)
+    os.makedirs(nested_path, exist_ok=True)
+
+    original_run = git_util.subprocess.run
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("git rev-parse should not run when a .git marker exists")
+
+    git_util.subprocess.run = fail_if_called
+    try:
+        root, err = git_util.discover_git_worktree_root(nested_path)
+    finally:
+        git_util.subprocess.run = original_run
+
+    _assert(err is None, "marker-based git discovery should not return an error")
+    _assert(os.path.normcase(root) == os.path.normcase(repo_path), "nearest .git marker should define repo root")
+
+
+def test_stage_confirmation_survives_rev_parse_timeout(out_dir):
+    import subprocess
+    import git_util
+
+    repo_path = os.path.join(out_dir, "stage_marker_repo")
+    nested_path = os.path.join(repo_path, "dir")
+    os.makedirs(os.path.join(repo_path, ".git"), exist_ok=True)
+    os.makedirs(nested_path, exist_ok=True)
+
+    merged = os.path.join(nested_path, "merged.xlsx")
+    local = os.path.join(out_dir, "stage_local.xlsx")
+    base = os.path.join(out_dir, "stage_base.xlsx")
+    remote = os.path.join(out_dir, "stage_remote.xlsx")
+    for path, value in [(merged, "m"), (local, "l"), (base, "b"), (remote, "r")]:
+        _write_xlsx(path, [["Key", "V"], ["a", value]])
+
+    calls = []
+    original_run = git_util.subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append(cmd)
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+        if cmd[:2] == ["git", "add"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["git", "rm"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return original_run(cmd, *args, **kwargs)
+
+    git_util.subprocess.run = fake_run
+    try:
+        result = git_util.stage_merged_and_cleanup(merged, local, base, remote)
+    finally:
+        git_util.subprocess.run = original_run
+
+    _assert(result.success, "confirmation should succeed without git rev-parse when .git marker exists")
+    _assert(result.staged, "merged workbook should be staged")
+    _assert(not any(cmd[:3] == ["git", "rev-parse", "--show-toplevel"] for cmd in calls), "rev-parse should be skipped")
+    _assert(any(cmd[:2] == ["git", "add"] for cmd in calls), "git add should still run")
+
+
 def test_git_driver_completion_strategy_writes_target(out_dir):
     from git_merge_driver import GitDriverCompletionStrategy
 
@@ -380,6 +444,8 @@ def main():
         test_mode_c_without_new_sheets_preserves_metadata,
         test_column_conflict_writes_by_header,
         test_git_cleanup_policy_does_not_delete_repo_paths,
+        test_git_root_discovery_uses_marker_before_rev_parse,
+        test_stage_confirmation_survives_rev_parse_timeout,
         test_git_driver_completion_strategy_writes_target,
         test_multi_new_columns,
         test_performance_smoke,
