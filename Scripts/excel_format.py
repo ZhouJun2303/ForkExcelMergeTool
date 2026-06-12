@@ -17,7 +17,7 @@ COMMON_EXCEL_EXTENSIONS = [
     "xlw",
 ]
 
-MERGE_DIFF_EXTENSIONS = ["xlsx", "xlsm", "xltx", "xltm"]
+MERGE_DIFF_EXTENSIONS = ["xlsx", "xltx"]
 
 
 def extension_text():

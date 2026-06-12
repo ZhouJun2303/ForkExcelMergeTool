@@ -30,6 +30,7 @@ from gui_common import (
     set_global_busy,
     setup_merge_styles,
 )
+from git_util import CleanupPolicy
 from log_util import log
 from log_util import merge_options_path, release_compare_lock
 from version import __version__ as APP_VERSION
@@ -229,11 +230,11 @@ class DiffWindow:
             base_name = os.path.splitext(os.path.basename(path_a))[0]
             from config import COMPARE_SUFFIX
             expected_out = os.path.join(out_dir, base_name + COMPARE_SUFFIX + ".xlsx")
-            is_temp = "Temp" in path_a or "Fork" in path_a or "tmp" in path_a.lower()
             path_out, sheet_names, diff_rows = get_compare_data(path_a, path_b, include_same=False)
             if path_out is None:
                 raise RuntimeError("get_compare_data 失败")
             write_compare_excel(path_out, sheet_names, diff_rows, open_file=False)
+            is_temp = CleanupPolicy.default().allows(path_out)
             elapsed_ms = int((time.time() - started) * 1000)
             return {
                 "path_out": path_out or expected_out,

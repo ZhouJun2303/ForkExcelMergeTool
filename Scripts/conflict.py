@@ -352,17 +352,17 @@ def compute_conflicts_d(path_local, path_remote, path_base=None):
     """
     wb_l = openpyxl.load_workbook(path_local, data_only=False)
     wb_r = openpyxl.load_workbook(path_remote, data_only=False)
+    wb_b = openpyxl.load_workbook(path_base, data_only=False) if path_base else None
 
     seen = set()
     sheet_names = []
-    for n in get_sheet_names(wb_l):
-        if n not in seen:
-            seen.add(n)
-            sheet_names.append(n)
-    for n in get_sheet_names(wb_r):
-        if n not in seen:
-            seen.add(n)
-            sheet_names.append(n)
+    for wb in (wb_b, wb_l, wb_r):
+        if wb is None:
+            continue
+        for n in get_sheet_names(wb):
+            if n not in seen:
+                seen.add(n)
+                sheet_names.append(n)
 
     conflict_rows = []
     conflict_cols = []
@@ -370,10 +370,19 @@ def compute_conflicts_d(path_local, path_remote, path_base=None):
     for sheet_name in sheet_names:
         ws_l = wb_l[sheet_name] if sheet_name in wb_l.sheetnames else None
         ws_r = wb_r[sheet_name] if sheet_name in wb_r.sheetnames else None
+        ws_b = wb_b[sheet_name] if wb_b is not None and sheet_name in wb_b.sheetnames else None
         if not ws_l or not ws_r:
             continue
-        max_col = max(ws_l.max_column or 1, ws_r.max_column or 1)
-        max_row = max(ws_l.max_row or 1, ws_r.max_row or 1)
+        max_col = max(
+            ws_l.max_column or 1,
+            ws_r.max_column or 1,
+            (ws_b.max_column or 1) if ws_b else 1,
+        )
+        max_row = max(
+            ws_l.max_row or 1,
+            ws_r.max_row or 1,
+            (ws_b.max_row or 1) if ws_b else 1,
+        )
 
         # 使用缓存加速合并单元格查找
         rows_l, idx_l = load_sheet_rows_full(ws_l, max_col, use_cache=True)
@@ -393,11 +402,14 @@ def compute_conflicts_d(path_local, path_remote, path_base=None):
 
         header_l = load_sheet_header(ws_l, max_col)
         header_r = load_sheet_header(ws_r, max_col)
+        header_b = load_sheet_header(ws_b, max_col) if ws_b else []
         norm_to_col_l = _normalized_header_to_index(header_l[:max_col])
         norm_to_col_r = _normalized_header_to_index(header_r[:max_col])
+        norm_to_col_b = _normalized_header_to_index(header_b[:max_col]) if ws_b else {}
         common_headers = set(norm_to_col_l) & set(norm_to_col_r)
         merged_cache_l = build_merged_cells_cache(ws_l) if has_merged_cells(ws_l) else None
         merged_cache_r = build_merged_cells_cache(ws_r) if has_merged_cells(ws_r) else None
+        merged_cache_b = build_merged_cells_cache(ws_b) if ws_b is not None and has_merged_cells(ws_b) else None
         for h_norm in common_headers:
             col_l = get_column_values(
                 ws_l, norm_to_col_l[h_norm], max_row, merged_cache=merged_cache_l,
@@ -405,15 +417,25 @@ def compute_conflicts_d(path_local, path_remote, path_base=None):
             col_r = get_column_values(
                 ws_r, norm_to_col_r[h_norm], max_row, merged_cache=merged_cache_r,
             )
+            col_b = []
+            if ws_b is not None and h_norm in norm_to_col_b:
+                col_b = get_column_values(
+                    ws_b, norm_to_col_b[h_norm], max_row, merged_cache=merged_cache_b,
+                )
+                if col_equal(col_l, col_b) or col_equal(col_r, col_b):
+                    continue
             if not col_equal(col_l, col_r):
                 conflict_cols.append({
                     "sheet": sheet_name,
                     "key": header_l[norm_to_col_l[h_norm] - 1] or header_r[norm_to_col_r[h_norm] - 1],
                     "local_col": col_l,
                     "remote_col": col_r,
+                    "base_col": col_b,
                     "kind": "column",
                 })
 
     wb_l.close()
     wb_r.close()
+    if wb_b is not None:
+        wb_b.close()
     return conflict_rows, conflict_cols, sheet_names

@@ -201,7 +201,8 @@ class MergeWindow:
         apply_app_icon(self.root)
         self.root.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
-        self.local_info, self.remote_info = get_git_merge_info(path_merged)
+        git_context_path = getattr(self.completion_strategy, "context_path", None) or path_merged
+        self.local_info, self.remote_info = get_git_merge_info(git_context_path)
         self._build_ui()
         install_global_button_loading(self.root)
         self._schedule_preview_refresh()
@@ -773,6 +774,7 @@ class MergeWindow:
                 self.path_remote,
                 merged_path,
                 backup_root=self._current_backup_root(),
+                context_path=getattr(self.completion_strategy, "context_path", None) or self.path_merged,
             )
             self._set_backup_info(backup_info)
             gui_log("已手动保存备份：%s" % backup_info["dir"], self.status_var)
@@ -993,10 +995,14 @@ class MergeWindow:
                     kind = entry.get("kind", "row")
                     conflict_type = c.get("type", "modify_conflict")
                     
-                    # 提取三方数据
-                    base_vals = [cell_str(x) for x in (c.get("base_row") or [])]
-                    local_vals = [cell_str(x) for x in (c.get("local_row") or [])]
-                    remote_vals = [cell_str(x) for x in (c.get("remote_row") or [])]
+                    if kind == "column":
+                        base_vals = [cell_str(x) for x in (c.get("base_col") or [])]
+                        local_vals = [cell_str(x) for x in (c.get("local_col") or [])]
+                        remote_vals = [cell_str(x) for x in (c.get("remote_col") or [])]
+                    else:
+                        base_vals = [cell_str(x) for x in (c.get("base_row") or [])]
+                        local_vals = [cell_str(x) for x in (c.get("local_row") or [])]
+                        remote_vals = [cell_str(x) for x in (c.get("remote_row") or [])]
                     
                     # 根据冲突类型设置标题
                     type_names = {
@@ -1004,6 +1010,7 @@ class MergeWindow:
                         "delete_conflict_local": "删除冲突（本地删除）",
                         "delete_conflict_remote": "删除冲突（线上删除）",
                         "modify_conflict": "修改冲突",
+                        "column_conflict": "列冲突",
                     }
                     type_name = type_names.get(conflict_type, "冲突")
                     title = "%s — %s / %s" % (type_name, c["sheet"], c["key"])
@@ -1121,6 +1128,8 @@ class MergeWindow:
             hint = "线上删除了此行，本地保留/修改了此行"
         elif conflict_type == "add_conflict":
             hint = "BASE中不存在，双方都新增了此行但内容不同"
+        elif conflict_type == "column_conflict":
+            hint = "双方都修改了此列但内容不同"
         else:
             hint = "BASE中存在，双方都修改了此行但内容不同"
         

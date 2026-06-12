@@ -10,6 +10,10 @@ import sys
 import time
 
 import openpyxl
+from openpyxl.formatting.rule import CellIsRule
+from openpyxl.styles import PatternFill
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.table import Table, TableStyleInfo
 
 
 def _setup_paths():
@@ -53,6 +57,32 @@ def _rows(path):
 def _assert(cond, msg):
     if not cond:
         raise AssertionError(msg)
+
+
+def _add_common_sheet_metadata(ws):
+    ws.freeze_panes = "B2"
+    ws.auto_filter.ref = "A1:B2"
+    ws.column_dimensions["B"].width = 24
+    validation = DataValidation(type="list", formula1='"yes,no"', allow_blank=True)
+    validation.add("B2:B10")
+    ws.add_data_validation(validation)
+    ws.conditional_formatting.add(
+        "B2:B10",
+        CellIsRule(
+            operator="notEqual",
+            formula=['""'],
+            fill=PatternFill(fill_type="solid", fgColor="FFF2CC"),
+        ),
+    )
+    table = Table(displayName="MetaTable", ref="A1:B2")
+    table.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium2",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=False,
+    )
+    ws.add_table(table)
 
 
 def test_compare_opens_once(out_dir):
@@ -122,6 +152,31 @@ def test_backup_same_second(out_dir):
     dirs = [info["dir"] for info in infos]
     _assert(len(set(dirs)) == 3, "same-second backups should create unique dirs")
     _assert(all(os.path.isdir(d) for d in dirs), "backup dirs should exist")
+
+
+def test_merge_diff_rejects_macro_extensions(out_dir):
+    from excel_format import merge_diff_supported
+
+    _assert(merge_diff_supported("demo.xlsx"), "xlsx should remain supported")
+    _assert(merge_diff_supported("template.xltx"), "xltx should remain supported")
+    _assert(not merge_diff_supported("macro.xlsm"), "xlsm should not be parsed because VBA would be lost")
+    _assert(not merge_diff_supported("macro_template.xltm"), "xltm should not be parsed because VBA would be lost")
+
+
+def test_backup_path_shortens_when_root_is_long(out_dir):
+    from backup_util import MAX_BACKUP_PATH_LEN, _backup_path_for_dir
+
+    backup_dir = os.path.join(out_dir, "x" * 60, "y" * 45)
+    context = os.path.join(out_dir, "very_long_excel_name_" + "n" * 100 + ".xlsx")
+    path = _backup_path_for_dir(
+        backup_dir,
+        context,
+        "merged",
+        {"author": "a" * 60, "short_hash": "1234567890abcdef", "message": "m" * 120},
+        {"author": "b" * 60, "short_hash": "abcdef1234567890", "message": "r" * 120},
+    )
+    _assert(len(os.path.abspath(path)) <= MAX_BACKUP_PATH_LEN, "backup file path should stay within configured budget")
+    _assert("__" in os.path.basename(path), "short backup name should include a stable digest")
 
 
 def test_delete_conflict_choices(out_dir):
@@ -258,6 +313,40 @@ def test_mode_c_without_new_sheets_preserves_metadata(out_dir):
     wb_m.close()
 
 
+def test_new_sheet_preserves_metadata(out_dir):
+    from merge_core import do_merge
+
+    local = os.path.join(out_dir, "new_sheet_meta_local.xlsx")
+    remote = os.path.join(out_dir, "new_sheet_meta_remote.xlsx")
+    merged = os.path.join(out_dir, "new_sheet_meta_merged.xlsx")
+    _write_xlsx(local, [["Key", "V"], ["a", "1"]])
+    shutil.copy2(local, remote)
+    wb = openpyxl.load_workbook(remote)
+    ws = wb.create_sheet("Extra")
+    ws.append(["Key", "V"])
+    ws.append(["x", "2"])
+    _add_common_sheet_metadata(ws)
+    wb.save(remote)
+    wb.close()
+
+    code = do_merge(
+        local, local, remote, merged,
+        options={"E"},
+        backup_root=os.path.join(out_dir, "backup_new_sheet_meta"),
+    )
+    _assert(code == 0, "new sheet metadata merge should succeed")
+    wb_m = openpyxl.load_workbook(merged)
+    ws_m = wb_m["Extra"]
+    _assert(ws_m.freeze_panes == "B2", "new sheet freeze panes should be copied")
+    _assert(ws_m.auto_filter.ref == "A1:B2", "new sheet auto filter should be copied")
+    _assert(int(ws_m.column_dimensions["B"].width) == 24, "new sheet column width should be copied")
+    _assert(len(ws_m.data_validations.dataValidation) == 1, "new sheet data validation should be copied")
+    _assert(str(ws_m.data_validations.dataValidation[0].sqref) == "B2:B10", "new sheet data validation range should be copied")
+    _assert(len(ws_m.conditional_formatting) == 1, "new sheet conditional formatting should be copied")
+    _assert(list(ws_m.tables.keys()) == ["MetaTable"], "new sheet tables should be copied")
+    wb_m.close()
+
+
 def test_column_conflict_writes_by_header(out_dir):
     from merge_core import do_merge
 
@@ -281,6 +370,45 @@ def test_column_conflict_writes_by_header(out_dir):
     _assert(rows[1] == ["k1", "remote_a", "base_b"], "remote column A should write into target A, not source index")
 
 
+def test_row_choice_writes_by_header(out_dir):
+    from merge_core import do_merge
+
+    base = os.path.join(out_dir, "row_header_base.xlsx")
+    local = os.path.join(out_dir, "row_header_local.xlsx")
+    remote = os.path.join(out_dir, "row_header_remote.xlsx")
+    merged = os.path.join(out_dir, "row_header_merged.xlsx")
+    _write_xlsx(base, [["Key", "A", "B"], ["k1", "base_a", "base_b"]])
+    _write_xlsx(local, [["Key", "A", "B"], ["k1", "local_a", "local_b"]])
+    _write_xlsx(remote, [["Key", "B", "A"], ["k1", "remote_b", "remote_a"]])
+
+    code = do_merge(
+        local, base, remote, merged,
+        mode="D",
+        d_choices=[{"sheet": "Data", "key": "k1", "choice": "remote", "kind": "row"}],
+        backup_root=os.path.join(out_dir, "backup_row_header"),
+    )
+    _assert(code == 0, "row choice with reordered headers should succeed")
+    rows = _rows(merged)
+    _assert(rows[0] == ["Key", "A", "B"], "output header order should remain local/base order")
+    _assert(rows[1] == ["k1", "remote_a", "remote_b"], "row choice should map source cells by header")
+
+
+def test_column_conflicts_are_in_merge_preview(out_dir):
+    from preview_core import build_merge_preview
+
+    base = os.path.join(out_dir, "preview_col_base.xlsx")
+    local = os.path.join(out_dir, "preview_col_local.xlsx")
+    remote = os.path.join(out_dir, "preview_col_remote.xlsx")
+    _write_xlsx(base, [["Key", "A", "B"], ["k1", "base_a", "same"], ["k2", "base_a2", "same"]])
+    _write_xlsx(local, [["Key", "A", "B"], ["k1", "local_a", "same"], ["k2", "local_a2", "same"]])
+    _write_xlsx(remote, [["Key", "B", "A"], ["k1", "same", "remote_a"], ["k2", "same", "remote_a2"]])
+
+    result = build_merge_preview(local, base, remote, {"A", "B", "E", "G"}, "local")
+    col_entries = [e for e in result["conflict_entries"] if e.get("kind") == "column"]
+    _assert(any((e.get("data") or {}).get("key") == "A" for e in col_entries), "column conflict A should be exposed in G preview")
+    _assert(any("列冲突" in str(item[1]) for item in result["items"]), "preview list should show column conflict")
+
+
 def test_git_cleanup_policy_does_not_delete_repo_paths(out_dir):
     from git_util import CleanupPolicy
 
@@ -290,6 +418,16 @@ def test_git_cleanup_policy_does_not_delete_repo_paths(out_dir):
     _write_xlsx(real_file, [["Key", "V"], ["a", "1"]])
     policy = CleanupPolicy.default()
     _assert(not policy.allows(real_file), "repo path containing fork/temp words must not be treated as temp")
+
+
+def test_compare_temp_detection_uses_cleanup_policy(out_dir):
+    from git_util import CleanupPolicy
+
+    repo_path = os.path.join(out_dir, "ForkNamedRealProject")
+    os.makedirs(repo_path, exist_ok=True)
+    compare_file = os.path.join(repo_path, "book_compare.xlsx")
+    _write_xlsx(compare_file, [["Key", "V"], ["a", "1"]])
+    _assert(not CleanupPolicy.default().allows(compare_file), "compare output in a real Fork-named project should not be considered temp")
 
 
 def test_git_root_discovery_uses_marker_before_rev_parse(out_dir):
@@ -438,12 +576,18 @@ def main():
         test_compare_formula_changes,
         test_key_normalization_edges,
         test_backup_same_second,
+        test_merge_diff_rejects_macro_extensions,
+        test_backup_path_shortens_when_root_is_long,
         test_delete_conflict_choices,
         test_auto_single_side_modifications,
         test_auto_single_side_cell_merge_preserves_new_columns,
         test_mode_c_without_new_sheets_preserves_metadata,
+        test_new_sheet_preserves_metadata,
         test_column_conflict_writes_by_header,
+        test_row_choice_writes_by_header,
+        test_column_conflicts_are_in_merge_preview,
         test_git_cleanup_policy_does_not_delete_repo_paths,
+        test_compare_temp_detection_uses_cleanup_policy,
         test_git_root_discovery_uses_marker_before_rev_parse,
         test_stage_confirmation_survives_rev_parse_timeout,
         test_git_driver_completion_strategy_writes_target,

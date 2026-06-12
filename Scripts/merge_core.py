@@ -8,7 +8,7 @@
 import os
 import shutil
 import sys
-from copy import copy
+from copy import copy, deepcopy
 
 import openpyxl
 from openpyxl.styles import Font
@@ -85,6 +85,13 @@ def _copy_cell_style(src_cell, dst_cell):
             dst_cell.protection = copy(src_cell.protection)
 
 
+def _copy_cell_value_and_style(src_cell, dst_cell, font=None):
+    dst_cell.value = src_cell.value
+    _copy_cell_style(src_cell, dst_cell)
+    if font is not None:
+        dst_cell.font = font
+
+
 def _copy_row_with_style(ws_src, ws_dst, row_src, row_dst, max_col):
     """将 ws_src 的 row_src 行（值+样式）复制到 ws_dst 的 row_dst 行。合并格取区域左上角值。"""
     for c in range(1, max_col + 1):
@@ -119,6 +126,76 @@ def _copy_merged_cells(ws_src, ws_dst):
             )
     except Exception:
         pass
+
+
+def _unique_table_name(wb, preferred):
+    name = preferred or "Table"
+    try:
+        if not wb._duplicate_name(name):
+            return name
+        base = name[:240] if len(name) > 240 else name
+        for i in range(1, 10000):
+            candidate = "%s_%d" % (base, i)
+            if not wb._duplicate_name(candidate):
+                return candidate
+    except Exception:
+        pass
+    return name
+
+
+def _copy_sheet_metadata(ws_src, ws_dst):
+    """Copy common worksheet-level metadata that survives openpyxl round trips."""
+    for attr in ("sheet_format", "sheet_properties", "page_margins", "page_setup", "print_options"):
+        try:
+            setattr(ws_dst, attr, copy(getattr(ws_src, attr)))
+        except Exception:
+            pass
+    try:
+        ws_dst.freeze_panes = ws_src.freeze_panes
+    except Exception:
+        pass
+    try:
+        if ws_src.auto_filter and ws_src.auto_filter.ref:
+            ws_dst.auto_filter.ref = ws_src.auto_filter.ref
+    except Exception:
+        pass
+    try:
+        if ws_src.data_validations:
+            ws_dst.data_validations = deepcopy(ws_src.data_validations)
+    except Exception:
+        pass
+    try:
+        ws_dst.conditional_formatting = deepcopy(ws_src.conditional_formatting)
+    except Exception:
+        pass
+    for table in ws_src.tables.values():
+        try:
+            table_copy = deepcopy(table)
+            table_copy.name = _unique_table_name(ws_dst.parent, table_copy.name)
+            table_copy.displayName = table_copy.name
+            ws_dst.add_table(table_copy)
+        except Exception:
+            pass
+    try:
+        for row_idx, dim in ws_src.row_dimensions.items():
+            ws_dst.row_dimensions[row_idx] = copy(dim)
+            ws_dst.row_dimensions[row_idx].worksheet = ws_dst
+        for col_key, dim in ws_src.column_dimensions.items():
+            ws_dst.column_dimensions[col_key] = copy(dim)
+            ws_dst.column_dimensions[col_key].worksheet = ws_dst
+    except Exception:
+        pass
+
+
+def _copy_worksheet_to_new_sheet(wb_dst, ws_src, title=None):
+    ws_new = wb_dst.create_sheet(title or ws_src.title)
+    for row in ws_src.iter_rows():
+        for cell in row:
+            dst = ws_new.cell(row=cell.row, column=cell.column, value=cell.value)
+            _copy_cell_style(cell, dst)
+    _copy_sheet_metadata(ws_src, ws_new)
+    _copy_merged_cells(ws_src, ws_new)
+    return ws_new
 
 
 def _shift_merged_cells_after_insert_rows(ws, insert_at_row, amount=1):
@@ -214,6 +291,26 @@ def _compare_header_to_index(headers):
         if key and key not in out:
             out[key] = i + 1
     return out
+
+
+def _row_copy_plan(ws_out, ws_source, ws_base=None, max_col=None):
+    max_col = max_col or ((ws_out.max_column or 1) if ws_out else 1)
+    header_out = load_sheet_header(ws_out, max_col) if ws_out else []
+    header_source = load_sheet_header(ws_source, max(ws_source.max_column or 1, max_col)) if ws_source else []
+    header_base = load_sheet_header(ws_base, max((ws_base.max_column or 1) if ws_base else 1, max_col)) if ws_base else []
+    source_map = _compare_header_to_index(header_source)
+    base_map = _compare_header_to_index(header_base)
+    has_named_headers = bool(source_map) and bool(_compare_header_to_index(header_out))
+    plan = []
+    for out_col in range(1, max_col + 1):
+        src_col = out_col
+        base_col = out_col
+        if has_named_headers and out_col <= len(header_out):
+            norm = header_normalize_for_compare(header_out[out_col - 1])
+            src_col = source_map.get(norm, out_col)
+            base_col = base_map.get(norm, out_col)
+        plan.append((out_col, src_col, base_col))
+    return plan
 
 
 def _column_values_by_index(ws, col_indices, max_row):
@@ -431,19 +528,7 @@ def _merge_mode_c_impl(path_base_side, path_other_side, path_merged, base_side):
 
     wb_out = wb_base
     for name in new_sheets:
-        ws = wb_other[name]
-        ws_new = wb_out.create_sheet(name)
-        for r in ws.iter_rows():
-            for c in r:
-                dst = ws_new.cell(row=c.row, column=c.column, value=c.value)
-                _copy_cell_style(c, dst)
-        for r in ws.row_dimensions:
-            if ws.row_dimensions[r].height is not None:
-                ws_new.row_dimensions[r].height = ws.row_dimensions[r].height
-        for c in ws.column_dimensions:
-            if ws.column_dimensions[c].width is not None:
-                ws_new.column_dimensions[c].width = ws.column_dimensions[c].width
-        _copy_merged_cells(ws, ws_new)
+        _copy_worksheet_to_new_sheet(wb_out, wb_other[name], name)
 
     wb_other.close()
     if not wb_out.sheetnames:
@@ -469,11 +554,7 @@ def _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choice
         wb_out.remove(wb_out.active)
         wb_local = openpyxl.load_workbook(path_local, data_only=False)
         for sheet_name in get_sheet_names(wb_local):
-            ws_l = wb_local[sheet_name]
-            ws_new = wb_out.create_sheet(sheet_name)
-            for r in ws_l.iter_rows():
-                for c in r:
-                    ws_new.cell(row=c.row, column=c.column, value=c.value)
+            _copy_worksheet_to_new_sheet(wb_out, wb_local[sheet_name], sheet_name)
         wb_local.close()
 
     wb_local = openpyxl.load_workbook(path_local, data_only=False)
@@ -516,25 +597,24 @@ def _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, d_choice
                 _shift_merged_cells_after_insert_rows(ws_out, row_idx_out, 1)
             _font_mod = Font(color="CC6600")
             auto_type = item.get("type")
+            copy_plan = _row_copy_plan(ws_out, source, ws_b, max_col)
             if auto_type in ("take_local", "take_remote"):
                 row_idx_base = None
                 if ws_b is not None:
                     key_to_row_base = _row_key_to_index(ws_b, max_col)
                     row_idx_base = key_to_row_base.get(key_norm)
-                for c in range(1, max_col + 1):
-                    src_c = source.cell(row=row_idx_source, column=c)
-                    base_val = ws_b.cell(row=row_idx_base, column=c).value if ws_b is not None and row_idx_base else None
+                for out_col, src_col, base_col in copy_plan:
+                    src_c = source.cell(row=row_idx_source, column=src_col)
+                    base_val = ws_b.cell(row=row_idx_base, column=base_col).value if ws_b is not None and row_idx_base else None
                     if cell_str(src_c.value) == cell_str(base_val):
                         continue
-                    dst_c = ws_out.cell(row=row_idx_out, column=c, value=src_c.value)
-                    _copy_cell_style(src_c, dst_c)
-                    dst_c.font = _font_mod
+                    dst_c = ws_out.cell(row=row_idx_out, column=out_col)
+                    _copy_cell_value_and_style(src_c, dst_c, _font_mod)
                 continue
-            for c in range(1, max_col + 1):
-                src_c = source.cell(row=row_idx_source, column=c)
-                dst_c = ws_out.cell(row=row_idx_out, column=c, value=src_c.value)
-                _copy_cell_style(src_c, dst_c)
-                dst_c.font = _font_mod
+            for out_col, src_col, _base_col in copy_plan:
+                src_c = source.cell(row=row_idx_source, column=src_col)
+                dst_c = ws_out.cell(row=row_idx_out, column=out_col)
+                _copy_cell_value_and_style(src_c, dst_c, _font_mod)
         else:
             header_out = load_sheet_header(ws_out, max_col)
             header_l = load_sheet_header(ws_l, max_col) if ws_l else []
@@ -811,6 +891,414 @@ def _merge_mode_b_preserve_format(path_in, path_other_side, path_out, base_side)
     log("[Option B] 新增列插入（保留格式）完成 %s" % path_out)
 
 
+def _merge_mode_a_preserve_format_wb(wb_in, wb_other, base_side):
+    """在已打开的基准工作簿中插入另一侧新增行，返回新增行数。"""
+    inserted_count = 0
+    for sheet_name in list(wb_in.sheetnames):
+        if sheet_name not in wb_other.sheetnames:
+            continue
+        ws_in = wb_in[sheet_name]
+        ws_o = wb_other[sheet_name]
+        max_col = max(ws_in.max_column or 1, ws_o.max_column or 1)
+        rows_in, idx_in = load_sheet_rows_full(ws_in, max_col, use_cache=True)
+        rows_o, idx_o = load_sheet_rows_full(ws_o, max_col, use_cache=True)
+        base_keys = set(key_str_normalized(r[0]) if r else "" for r in rows_in)
+        base_keys.discard("")
+        key_to_row_in = {}
+        for i, r in enumerate(rows_in):
+            k = key_str_normalized(r[0]) if r else ""
+            if k and i < len(idx_in):
+                key_to_row_in[k] = idx_in[i]
+        base_ordered = ordered_keys_normalized(rows_in)
+        other_ordered = ordered_keys_normalized(rows_o)
+        new_keys = [k for k in other_ordered if k not in base_keys]
+        merged_ordered = merge_ordered_with_new_rows(base_ordered, new_keys)
+        key_to_rows_other = {}
+        for i, r in enumerate(rows_o):
+            k = key_str_normalized(r[0]) if r else ""
+            if k and i < len(idx_o):
+                key_to_rows_other.setdefault(k, []).append(idx_o[i])
+        last_base_row = None
+        inserts = []
+        for order_idx, k in enumerate(merged_ordered):
+            if k in key_to_row_in:
+                last_base_row = key_to_row_in[k]
+            elif k in key_to_rows_other:
+                insert_after = (last_base_row if last_base_row is not None else 0)
+                inserts.append((insert_after, k, order_idx))
+
+        def _sort_key(item):
+            ia, _key, oi = item[0], item[1], item[2]
+            if ia >= 1:
+                return (-ia, -oi, 0)
+            return (0, -oi, 0)
+
+        for insert_after, new_key, _ in sorted(inserts, key=_sort_key):
+            other_rows = key_to_rows_other[new_key]
+            insert_at_row = (insert_after + 1) if insert_after >= 1 else 2
+            num_rows = len(other_rows)
+            if num_rows <= 0:
+                continue
+            ws_in.insert_rows(insert_at_row, num_rows)
+            _shift_merged_cells_after_insert_rows(ws_in, insert_at_row, num_rows)
+            for i, other_row_idx in enumerate(reversed(other_rows)):
+                row_dst = insert_at_row + (num_rows - 1 - i)
+                _copy_row_with_style(ws_o, ws_in, other_row_idx, row_dst, max_col)
+                _copy_row_merged_ranges_to(ws_o, other_row_idx, ws_in, row_dst)
+            inserted_count += num_rows
+    return inserted_count
+
+
+def _merge_mode_b_preserve_format_wb(wb_in, wb_other, base_side):
+    """在已打开的基准工作簿中插入另一侧新增列，返回新增列数。"""
+    inserted_count = 0
+    for sheet_name in list(wb_in.sheetnames):
+        if sheet_name not in wb_other.sheetnames:
+            continue
+        ws_in = wb_in[sheet_name]
+        ws_o = wb_other[sheet_name]
+        max_col_in = ws_in.max_column or 1
+        max_col_o = ws_o.max_column or 1
+        max_col = max(max_col_in, max_col_o)
+        header_in = load_sheet_header(ws_in, max_col)
+        header_o = load_sheet_header(ws_o, max_col)
+        header_in_norm_to_idx = _compare_header_to_index(header_in)
+        base_set_norm = set(header_in_norm_to_idx)
+        other_ordered = [h for h in header_o if h]
+        new_cols = [h for h in other_ordered if header_normalize_for_compare(h) not in base_set_norm]
+        merged_col_order = merge_ordered_with_new_cols([h for h in header_in if h], new_cols)
+        col_to_idx_o = {}
+        for i, h in enumerate(header_o):
+            if h:
+                col_to_idx_o[h] = i + 1
+        last_base_col = None
+        inserts = []
+        for h in merged_col_order:
+            idx_in = header_in_norm_to_idx.get(header_normalize_for_compare(h))
+            if idx_in is not None:
+                last_base_col = idx_in
+            elif h in col_to_idx_o:
+                insert_after = (last_base_col if last_base_col is not None else 0)
+                inserts.append((insert_after, h))
+        max_row = max(ws_in.max_row or 1, ws_o.max_row or 1)
+        merged_cache_o = build_merged_cells_cache(ws_o) if has_merged_cells(ws_o) and inserts else None
+        for insert_after, col_key in sorted(inserts, key=lambda x: -x[0]):
+            col_o = col_to_idx_o[col_key]
+            if insert_after >= 1:
+                insert_at_col = insert_after + 1
+            else:
+                insert_at_col = (ws_in.max_column or 1) + 1
+            ws_in.insert_cols(insert_at_col, 1)
+            _shift_merged_cells_after_insert_cols(ws_in, insert_at_col, 1)
+            _copy_col_with_style(ws_o, ws_in, col_o, insert_at_col, max_row, merged_cache_o)
+            _copy_col_merged_ranges_to(ws_o, col_o, ws_in, insert_at_col)
+            inserted_count += 1
+    return inserted_count
+
+
+def _merge_delete_rows_wb(wb_in, wb_other):
+    """从已打开的工作簿中删除另一侧缺失的行，返回删除行数。"""
+    deleted_count = 0
+    for sheet_name in list(wb_in.sheetnames):
+        if sheet_name not in wb_other.sheetnames:
+            continue
+        ws_in = wb_in[sheet_name]
+        ws_o = wb_other[sheet_name]
+        max_col = max(ws_in.max_column or 1, ws_o.max_column or 1)
+        rows_o, _ = load_sheet_rows_full(ws_o, max_col, use_cache=True)
+        keys_other = set(key_str_normalized(r[0]) if r else "" for r in rows_o)
+        keys_other.discard("")
+        rows_in, idx_in = load_sheet_rows_full(ws_in, max_col, use_cache=True)
+        to_delete = []
+        for i, r in enumerate(rows_in):
+            k = key_str_normalized(r[0]) if r else ""
+            if k and k not in keys_other:
+                to_delete.append(idx_in[i] if i < len(idx_in) else i + 1)
+        for row_idx in sorted(set(to_delete), reverse=True):
+            ws_in.delete_rows(row_idx, 1)
+            deleted_count += 1
+    return deleted_count
+
+
+def _merge_delete_cols_wb(wb_in, wb_other):
+    """从已打开的工作簿中删除另一侧缺失的列，返回删除列数。"""
+    deleted_count = 0
+    for sheet_name in list(wb_in.sheetnames):
+        if sheet_name not in wb_other.sheetnames:
+            continue
+        ws_in = wb_in[sheet_name]
+        ws_o = wb_other[sheet_name]
+        max_col = max(ws_in.max_column or 1, ws_o.max_column or 1)
+        header_in = load_sheet_header(ws_in, max_col)
+        header_o = load_sheet_header(ws_o, max_col)
+        keys_other_norm = set(header_normalize_for_compare(h) for h in header_o if h)
+        to_delete = []
+        for c in range(len(header_in) - 1, -1, -1):
+            h = header_in[c] if c < len(header_in) else ""
+            if h and header_normalize_for_compare(h) not in keys_other_norm:
+                col_1based = c + 1
+                if col_1based != 1:
+                    to_delete.append(col_1based)
+        for col_idx in sorted(to_delete, reverse=True):
+            ws_in.delete_cols(col_idx, 1)
+            deleted_count += 1
+    return deleted_count
+
+
+def _merge_mode_c_wb(wb_in, wb_other):
+    """在已打开的工作簿中追加另一侧新增 Sheet，返回 Sheet 名列表。"""
+    base_sheets = set(get_sheet_names(wb_in))
+    new_sheets = [n for n in get_sheet_names(wb_other) if n not in base_sheets]
+    for name in new_sheets:
+        _copy_worksheet_to_new_sheet(wb_in, wb_other[name], name)
+    return new_sheets
+
+
+def _merge_delete_sheets_wb(wb_in, wb_other):
+    """从已打开的工作簿中删除另一侧缺失的 Sheet，返回删除 Sheet 名列表。"""
+    other_sheets = set(get_sheet_names(wb_other))
+    deleted = []
+    for name in list(wb_in.sheetnames):
+        if name not in other_sheets:
+            del wb_in[name]
+            deleted.append(name)
+    if not wb_in.sheetnames:
+        wb_in.create_sheet("Data")
+    return deleted
+
+
+def _row_maps_for_actions(ws, max_col):
+    rows, idx = load_sheet_rows_full(ws, max_col, use_cache=True) if ws else ([], [])
+    row_by_key = {}
+    row_index_by_key = {}
+    seen = set()
+    for i, row in enumerate(rows):
+        if i >= len(idx):
+            break
+        raw = cell_str(row[0]) if row else ""
+        key = key_str_normalized(raw) if raw else "__row_%d" % idx[i]
+        if key in seen:
+            key = "__row_%d" % idx[i]
+        seen.add(key)
+        row_by_key[key] = row
+        row_index_by_key[key] = idx[i]
+    return row_by_key, row_index_by_key
+
+
+def _compute_auto_row_actions_from_workbooks(wb_l, wb_b, wb_r):
+    """基于已打开的三方工作簿计算非冲突自动行动作。"""
+    seen = set()
+    sheet_names = []
+    for wb in (wb_b, wb_l, wb_r):
+        for name in get_sheet_names(wb):
+            if name not in seen:
+                seen.add(name)
+                sheet_names.append(name)
+
+    actions = []
+    for sheet_name in sheet_names:
+        ws_l = wb_l[sheet_name] if sheet_name in wb_l.sheetnames else None
+        ws_b = wb_b[sheet_name] if sheet_name in wb_b.sheetnames else None
+        ws_r = wb_r[sheet_name] if sheet_name in wb_r.sheetnames else None
+        max_col = max(
+            (ws_l.max_column or 1) if ws_l else 1,
+            (ws_b.max_column or 1) if ws_b else 1,
+            (ws_r.max_column or 1) if ws_r else 1,
+        )
+        dict_l, key_to_row_l = _row_maps_for_actions(ws_l, max_col) if ws_l else ({}, {})
+        dict_b, key_to_row_b = _row_maps_for_actions(ws_b, max_col) if ws_b else ({}, {})
+        dict_r, key_to_row_r = _row_maps_for_actions(ws_r, max_col) if ws_r else ({}, {})
+
+        for key in set(dict_b) | set(dict_l) | set(dict_r):
+            if 1 in (
+                key_to_row_l.get(key),
+                key_to_row_b.get(key),
+                key_to_row_r.get(key),
+            ):
+                continue
+            row_b = dict_b.get(key)
+            if row_b is None:
+                continue
+            row_l = dict_l.get(key)
+            row_r = dict_r.get(key)
+            if row_l is None and row_r is None:
+                continue
+            if row_l is None:
+                if row_equal(row_r, row_b):
+                    actions.append({
+                        "sheet": sheet_name,
+                        "key": key,
+                        "choice": "local",
+                        "kind": "row",
+                        "type": "delete_local",
+                    })
+                continue
+            if row_r is None:
+                if row_equal(row_l, row_b):
+                    actions.append({
+                        "sheet": sheet_name,
+                        "key": key,
+                        "choice": "remote",
+                        "kind": "row",
+                        "type": "delete_remote",
+                    })
+                continue
+            if row_equal(row_l, row_r):
+                continue
+            local_changed = not row_equal(row_l, row_b)
+            remote_changed = not row_equal(row_r, row_b)
+            if local_changed and not remote_changed:
+                actions.append({
+                    "sheet": sheet_name,
+                    "key": key,
+                    "choice": "local",
+                    "kind": "row",
+                    "type": "take_local",
+                })
+            elif remote_changed and not local_changed:
+                actions.append({
+                    "sheet": sheet_name,
+                    "key": key,
+                    "choice": "remote",
+                    "kind": "row",
+                    "type": "take_remote",
+                })
+    return actions
+
+
+def _shift_row_map_after_delete(key_to_row, deleted_row):
+    for key, row_idx in list(key_to_row.items()):
+        if row_idx == deleted_row:
+            del key_to_row[key]
+        elif row_idx > deleted_row:
+            key_to_row[key] = row_idx - 1
+
+
+def _shift_row_map_after_insert(key_to_row, insert_at_row, amount=1):
+    for key, row_idx in list(key_to_row.items()):
+        if row_idx >= insert_at_row:
+            key_to_row[key] = row_idx + amount
+
+
+def _apply_merge_choices_to_workbook(wb_out, wb_local, wb_base, wb_remote, d_choices):
+    """将冲突选择和自动动作批量写入已打开的输出工作簿。"""
+    if not d_choices:
+        return 0
+    font_mod = Font(color="CC6600")
+    sheet_cache = {}
+    applied = 0
+
+    def cache_for_sheet(sheet_name):
+        if sheet_name in sheet_cache:
+            return sheet_cache[sheet_name]
+        if sheet_name not in wb_out.sheetnames:
+            sheet_cache[sheet_name] = None
+            return None
+        ws_out = wb_out[sheet_name]
+        ws_l = wb_local[sheet_name] if sheet_name in wb_local.sheetnames else None
+        ws_b = wb_base[sheet_name] if sheet_name in wb_base.sheetnames else None
+        ws_r = wb_remote[sheet_name] if sheet_name in wb_remote.sheetnames else None
+        max_col = ws_out.max_column or 1
+        cache = {
+            "ws_out": ws_out,
+            "ws_l": ws_l,
+            "ws_b": ws_b,
+            "ws_r": ws_r,
+            "row_out": _row_key_to_index(ws_out, max_col),
+            "row_l": _row_key_to_index(ws_l, max_col) if ws_l else {},
+            "row_b": _row_key_to_index(ws_b, max_col) if ws_b else {},
+            "row_r": _row_key_to_index(ws_r, max_col) if ws_r else {},
+            "header_out": None,
+            "header_l": None,
+            "header_r": None,
+            "header_max_col": None,
+        }
+        sheet_cache[sheet_name] = cache
+        return cache
+
+    def header_maps(cache):
+        ws_out = cache["ws_out"]
+        max_col = ws_out.max_column or 1
+        if cache["header_max_col"] != max_col:
+            ws_l = cache["ws_l"]
+            ws_r = cache["ws_r"]
+            cache["header_out"] = _compare_header_to_index(load_sheet_header(ws_out, max_col))
+            cache["header_l"] = _compare_header_to_index(load_sheet_header(ws_l, max_col) if ws_l else [])
+            cache["header_r"] = _compare_header_to_index(load_sheet_header(ws_r, max_col) if ws_r else [])
+            cache["header_max_col"] = max_col
+        return cache["header_out"], cache["header_l"], cache["header_r"]
+
+    for item in d_choices or []:
+        sheet_name = item.get("sheet")
+        cache = cache_for_sheet(sheet_name)
+        if not cache:
+            continue
+        key = item.get("key")
+        choice = item.get("choice", "local")
+        kind = item.get("kind", "row")
+        ws_out = cache["ws_out"]
+        ws_l = cache["ws_l"]
+        ws_b = cache["ws_b"]
+        ws_r = cache["ws_r"]
+        max_col = ws_out.max_column or 1
+        if kind == "row":
+            key_norm = key_str_normalized(key) or key
+            row_idx_out = cache["row_out"].get(key_norm)
+            source = ws_r if choice == "remote" else ws_l
+            source_rows = cache["row_r"] if choice == "remote" else cache["row_l"]
+            row_idx_source = source_rows.get(key_norm) if source else None
+            if not source or row_idx_source is None:
+                if row_idx_out is not None:
+                    ws_out.delete_rows(row_idx_out, 1)
+                    _shift_row_map_after_delete(cache["row_out"], row_idx_out)
+                    applied += 1
+                continue
+            if row_idx_out is None:
+                row_idx_out = min(row_idx_source, (ws_out.max_row or 0) + 1)
+                ws_out.insert_rows(row_idx_out, 1)
+                _shift_merged_cells_after_insert_rows(ws_out, row_idx_out, 1)
+                _shift_row_map_after_insert(cache["row_out"], row_idx_out, 1)
+                cache["row_out"][key_norm] = row_idx_out
+            auto_type = item.get("type")
+            copy_plan = _row_copy_plan(ws_out, source, ws_b, max_col)
+            if auto_type in ("take_local", "take_remote"):
+                row_idx_base = cache["row_b"].get(key_norm) if ws_b is not None else None
+                for out_col, src_col, base_col in copy_plan:
+                    src_c = source.cell(row=row_idx_source, column=src_col)
+                    base_val = ws_b.cell(row=row_idx_base, column=base_col).value if ws_b is not None and row_idx_base else None
+                    if cell_str(src_c.value) == cell_str(base_val):
+                        continue
+                    dst_c = ws_out.cell(row=row_idx_out, column=out_col)
+                    _copy_cell_value_and_style(src_c, dst_c, font_mod)
+            else:
+                for out_col, src_col, _base_col in copy_plan:
+                    src_c = source.cell(row=row_idx_source, column=src_col)
+                    dst_c = ws_out.cell(row=row_idx_out, column=out_col)
+                    _copy_cell_value_and_style(src_c, dst_c, font_mod)
+            applied += 1
+        else:
+            header_out, header_l, header_r = header_maps(cache)
+            norm_key = header_normalize_for_compare(key)
+            col_idx_out = header_out.get(norm_key)
+            col_idx_l = header_l.get(norm_key)
+            col_idx_r = header_r.get(norm_key)
+            col_idx = col_idx_l if choice == "local" else col_idx_r
+            source = ws_l if choice == "local" else ws_r
+            if col_idx is None or not source:
+                continue
+            if col_idx_out is None:
+                col_idx_out = (ws_out.max_column or 0) + 1
+                header_out[norm_key] = col_idx_out
+            max_row = ws_out.max_row or 1
+            for r in range(1, max_row + 1):
+                src_c = source.cell(row=r, column=col_idx)
+                dst_c = ws_out.cell(row=r, column=col_idx_out, value=src_c.value)
+                _copy_cell_style(src_c, dst_c)
+                dst_c.font = font_mod
+            applied += 1
+    return applied
+
+
 def _merge_choices(d_choices, auto_actions):
     merged = []
     seen = set()
@@ -830,7 +1318,6 @@ def _merge_choices(d_choices, auto_actions):
 def _do_merge_by_options(path_local, path_base, path_remote, path_merged, options, base_side, d_choices):
     options = set(options or [])
     path_base_side = path_local if base_side == "local" else path_remote
-    path_other_side = path_remote if base_side == "local" else path_local
     log("[Options] 合并管道 基准=%s（%s 为底）勾选项=%s（仅当 C 勾选时执行删除行）" % (
         "本地" if base_side == "local" else "线上",
         "LOCAL" if base_side == "local" else "REMOTE",
@@ -839,44 +1326,61 @@ def _do_merge_by_options(path_local, path_base, path_remote, path_merged, option
     import tempfile
     fd, path_cur = tempfile.mkstemp(suffix=".xlsx", prefix="merge_opt_")
     os.close(fd)
+    wb_out = None
+    wb_local = None
+    wb_base = None
+    wb_remote = None
     try:
         shutil.copy2(path_base_side, path_cur)
+        wb_out = openpyxl.load_workbook(path_cur, data_only=False)
+        wb_local = openpyxl.load_workbook(path_local, data_only=False)
+        wb_base = openpyxl.load_workbook(path_base, data_only=False)
+        wb_remote = openpyxl.load_workbook(path_remote, data_only=False)
+        wb_other = wb_remote if base_side == "local" else wb_local
+
         if "A" not in options:
-            _merge_mode_a_preserve_format(path_cur, path_other_side, path_cur + ".tmp", base_side)
-            os.replace(path_cur + ".tmp", path_cur)
+            inserted_rows = _merge_mode_a_preserve_format_wb(wb_out, wb_other, base_side)
+            log("[Option A] 新增行插入（保留格式）完成 rows=%d" % inserted_rows)
         if "C" in options:
-            _merge_delete_rows_impl(path_cur, path_other_side, path_cur + ".tmp")
-            os.replace(path_cur + ".tmp", path_cur)
+            deleted_rows = _merge_delete_rows_wb(wb_out, wb_other)
+            log("[Option C] 删除行完成 rows=%d" % deleted_rows)
         else:
             log("[Options] 跳过删除行（C 未勾选，基准侧独有行将保留）")
         if "B" not in options:
-            _merge_mode_b_preserve_format(path_cur, path_other_side, path_cur + ".tmp", base_side)
-            os.replace(path_cur + ".tmp", path_cur)
+            inserted_cols = _merge_mode_b_preserve_format_wb(wb_out, wb_other, base_side)
+            log("[Option B] 新增列插入（保留格式）完成 cols=%d" % inserted_cols)
         if "D" in options:
-            _merge_delete_cols_impl(path_cur, path_other_side, path_cur + ".tmp")
-            os.replace(path_cur + ".tmp", path_cur)
+            deleted_cols = _merge_delete_cols_wb(wb_out, wb_other)
+            log("[Option D] 删除列完成 cols=%d" % deleted_cols)
         if "E" in options:
-            _merge_mode_c_impl(path_cur, path_other_side, path_cur + ".tmp", base_side)
-            os.replace(path_cur + ".tmp", path_cur)
+            new_sheets = _merge_mode_c_wb(wb_out, wb_other)
+            if new_sheets:
+                log("[Mode C] 新增 Sheet 插入完成 new_sheets=%s" % new_sheets)
+            else:
+                log("[Mode C] 无新增 Sheet，保留当前工作簿")
         if "F" in options:
-            _merge_delete_sheets_impl(path_cur, path_other_side, path_cur + ".tmp")
-            os.replace(path_cur + ".tmp", path_cur)
-        auto_actions = compute_auto_row_actions(path_local, path_base, path_remote)
+            deleted_sheets = _merge_delete_sheets_wb(wb_out, wb_other)
+            log("[Option F] 删除 Sheet 完成 sheets=%s" % deleted_sheets)
+        auto_actions = _compute_auto_row_actions_from_workbooks(wb_local, wb_base, wb_remote)
         all_choices = _merge_choices(d_choices if "G" in options else [], auto_actions)
         if all_choices:
-            _merge_mode_d_impl(path_local, path_remote, path_merged, path_base, all_choices, path_initial_merged=path_cur)
-        else:
-            os.makedirs(os.path.dirname(os.path.abspath(path_merged)) or ".", exist_ok=True)
-            shutil.copy2(path_cur, path_merged)
+            applied = _apply_merge_choices_to_workbook(wb_out, wb_local, wb_base, wb_remote, all_choices)
+            log("[Mode D] 冲突/自动选择写回完成 actions=%d applied=%d" % (len(all_choices), applied))
+        if not wb_out.sheetnames:
+            wb_out.create_sheet("Data")
+        os.makedirs(os.path.dirname(os.path.abspath(path_merged)) or ".", exist_ok=True)
+        wb_out.save(path_merged)
         log("[Options] 管道完成 MERGED=%s options=%s auto_actions=%d" % (path_merged, options, len(auto_actions)))
         _log_merged_sheet_keys(path_merged, base_side, options)
     finally:
+        for wb in (wb_out, wb_local, wb_base, wb_remote):
+            if wb is not None:
+                try:
+                    wb.close()
+                except Exception:
+                    pass
         try:
             os.unlink(path_cur)
-        except Exception:
-            pass
-        try:
-            os.unlink(path_cur + ".tmp")
         except Exception:
             pass
 

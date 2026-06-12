@@ -45,7 +45,7 @@ Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Too
 install_git_integration.bat
 ```
 
-这会写入用户级 Git 配置和 attributes，匹配 `.xls`、`.xlsx`、`.xlsm`、`.xlsb`、`.xlt`、`.xltx`、`.xltm`、`.xla`、`.xlam`、`.xlw` 等常见 Excel 后缀。快速备份模式可直接备份这些后缀；合并对比模式当前支持 `.xlsx`、`.xlsm`、`.xltx`、`.xltm`。driver 模式确认后只把结果写回 Git 传入的 `%A`，不会执行 `git add`，也不会删除 Git 管理的临时文件。卸载：
+这会写入用户级 Git 配置和 attributes，匹配 `.xls`、`.xlsx`、`.xlsm`、`.xlsb`、`.xlt`、`.xltx`、`.xltm`、`.xla`、`.xlam`、`.xlw` 等常见 Excel 后缀。快速备份模式可直接备份这些后缀；合并对比模式当前支持 `.xlsx`、`.xltx`。`.xlsm`、`.xltm` 等宏文件为避免保存后丢失 VBA，默认只建议使用快速备份模式。driver 模式确认后只把结果写回 Git 传入的 `%A`，不会执行 `git add`，也不会删除 Git 管理的临时文件。卸载：
 
 ```text
 uninstall_git_integration.bat
@@ -118,14 +118,17 @@ uninstall_git_integration.bat
 备份目录结构为：
 
 ```text
-备份根目录\项目名\时间戳\
+备份根目录\项目名\时间戳__Excel名__L-作者-hash-提交标题__R-作者-hash-提交标题\
 ```
 
-若未设置备份根目录，默认使用 **MERGED 文件所在目录**下的 `MergeExcelBackup`。每次备份目录里包含：
+若未设置备份根目录，默认使用 **MERGED 文件所在目录**下的 `MergeExcelBackup`。每次备份目录里包含带 Excel 名、版本角色、作者、短 hash、提交标题的文件：
 
-- `{合并文件名}_local.xlsx`：本地版本
-- `{合并文件名}_remote.xlsx`：线上版本  
-- `{合并文件名}_merged.xlsx`：本次合并结果
+- `Excel名__local__L-作者-hash-提交标题.xlsx`：本地版本
+- `Excel名__remote__R-作者-hash-提交标题.xlsx`：线上版本
+- `Excel名__merged__L-作者-hash__R-作者-hash.xlsx`：本次合并结果
+
+若当前不在 Git 合并/变基/拣选场景，或无法读取提交信息，会使用 `unknown-author`、`no-hash`、`no-message` 等安全回退命名。
+若路径过长，备份文件名会自动缩短并加入稳定 hash，避免 Windows 长路径导致备份失败。新版命名备份会默认保留；确认解决冲突时只清理旧版扁平备份文件。
 
 「打开备份目录」会打开本次备份所在目录；若还没生成结果，则打开当前项目的备份目录。
 
@@ -211,7 +214,11 @@ ExcelMergeFork.exe --git-merge-driver <base> <current> <other> <repo-path>
 - 默认会处理**所有 Sheet**（包括常见的 Sheet1、Sheet2）。
 - 只有**以 `#` 开头的表名**会被跳过（可用于放说明、临时表等不参与合并的内容）。
 
-### 7.6 闪退或报错
+### 7.6 为什么 `.xlsm` / `.xltm` 不能直接合并对比
+
+这类文件可能包含 VBA 宏。当前合并对比逻辑使用 `openpyxl` 写回工作簿，直接保存宏文件有丢失 VBA 的风险，所以合并对比模式只解析 `.xlsx`、`.xltx`。如需处理宏文件冲突，请切到快速备份模式，先保留三方文件再人工处理。
+
+### 7.7 闪退或报错
 
 请查看与 exe（或脚本）同目录下的 **`MergeExcelFork.log`**，里面有错误堆栈，便于排查或反馈问题。
 

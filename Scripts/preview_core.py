@@ -10,6 +10,7 @@ import time
 import openpyxl
 
 from conflict import compute_conflicts
+from conflict import compute_conflicts_d
 from conflict import compute_auto_row_actions
 from excel_io import (
     get_sheet_names,
@@ -242,6 +243,38 @@ def _append_conflict_preview_items(path_local, path_base_file, path_remote, item
             choice_text = "信息：本地新增" if conflict_type == "add_local" else "信息：线上新增"
             items_to_insert.append((c["sheet"], "%s (%s)" % (c["key"], suffix), choice_text, tag))
             summary["info"] += 1
+    _append_column_conflict_preview_items(path_local, path_base_file, path_remote, items_to_insert, conflict_entries, summary)
+
+
+def _append_column_conflict_preview_items(path_local, path_base_file, path_remote, items_to_insert, conflict_entries, summary):
+    _row_conflicts, conflict_cols, _sheet_names = compute_conflicts_d(path_local, path_remote, path_base_file)
+    existing = set()
+    for entry in conflict_entries:
+        if entry.get("kind") == "column":
+            data = entry.get("data") or {}
+            existing.add((data.get("sheet"), data.get("key")))
+    for c in conflict_cols:
+        key = c.get("key")
+        sheet = c.get("sheet")
+        if not key or (sheet, key) in existing:
+            continue
+        idx = len(conflict_entries)
+        conflict_entries.append({
+            "choice": "本地",
+            "data": {
+                "sheet": sheet,
+                "key": key,
+                "type": "column_conflict",
+                "local_col": c.get("local_col") or [],
+                "remote_col": c.get("remote_col") or [],
+                "base_col": c.get("base_col") or [],
+            },
+            "kind": "column",
+            "display": "将保留本地列",
+        })
+        items_to_insert.append((sheet, "%s (列冲突)" % key, "将保留本地列", (str(idx), "conflict")))
+        existing.add((sheet, key))
+        summary["conflict"] += 1
 
 
 def _append_auto_action_preview_items(path_local, path_base_file, path_remote, items_to_insert, summary):
