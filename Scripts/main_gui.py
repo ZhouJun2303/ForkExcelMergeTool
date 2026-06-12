@@ -16,8 +16,10 @@ from app_settings import (
 from backup_util import load_saved_backup_root, save_backup_root
 from excel_format import merge_diff_extension_text
 from git_integration import (
+    ATTR_LINES,
     EXCEL_EXTENSION_TEXT,
     current_executable_path,
+    driver_command,
     install_global_integration,
     integration_status,
     uninstall_global_integration,
@@ -25,6 +27,7 @@ from git_integration import (
 from gui_common import (
     ToolTip,
     UpdateButtonController,
+    UI,
     apply_app_icon,
     gui_log,
     install_global_button_loading,
@@ -84,10 +87,11 @@ class MainWindow:
         self.git_detail_var = tk.StringVar(self.root, value="")
         self.git_progress_var = tk.IntVar(self.root, value=0)
         self.git_busy = False
+        self._copy_vars = []
         self.update_controller = None
         self.root.title("ExcelMergeFork 设置中心 v%s" % APP_VERSION)
-        self.root.minsize(780, 620)
-        self.root.geometry("900x680")
+        self.root.minsize(820, 680)
+        self.root.geometry("960x740")
         setup_merge_styles(self.root)
         apply_app_icon(self.root)
         if parent is not None:
@@ -125,10 +129,8 @@ class MainWindow:
         body.columnconfigure(1, weight=2)
         body.rowconfigure(0, weight=1)
 
-        left = ttk.Frame(body, padding=(14, 14), style="Panel.TFrame")
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-        right = ttk.Frame(body, padding=(14, 14), style="Panel.TFrame")
-        right.grid(row=0, column=1, sticky="nsew")
+        left = self._make_scroll_panel(body, 0, padx=(0, 12))
+        right = self._make_scroll_panel(body, 1)
 
         ttk.Label(left, text="默认运行模式", style="Section.TLabel").pack(anchor=tk.W)
         feature_a = ttk.Radiobutton(
@@ -230,6 +232,9 @@ class MainWindow:
         )
 
         make_separator(right).pack(fill=tk.X, pady=16)
+        self._build_integration_guide(right)
+
+        make_separator(right).pack(fill=tk.X, pady=16)
         ttk.Label(right, text="启动方式", style="Section.TLabel").pack(anchor=tk.W)
         ttk.Label(
             right,
@@ -242,6 +247,125 @@ class MainWindow:
         bottom.pack(fill=tk.X)
         ttk.Label(bottom, textvariable=self.status_var, style="Panel.TLabel").pack(side=tk.LEFT, fill=tk.X, expand=True)
         make_icon_button(bottom, self.root, "关闭", "cancel", command=self._on_close, style="Secondary.TButton").pack(side=tk.RIGHT)
+
+    def _make_scroll_panel(self, parent, column, padx=(0, 0)):
+        outer = ttk.Frame(parent, style="Panel.TFrame")
+        outer.grid(row=0, column=column, sticky="nsew", padx=padx)
+        outer.rowconfigure(0, weight=1)
+        outer.columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(outer, bg=UI["panel"], highlightthickness=0, bd=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        inner = ttk.Frame(canvas, padding=(14, 14), style="Panel.TFrame")
+        canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def on_frame_configure(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def on_canvas_configure(event):
+            canvas.itemconfigure(canvas_window, width=event.width)
+
+        def on_mousewheel(event):
+            delta = -1 * int(event.delta / 120) if event.delta else 0
+            if delta:
+                canvas.yview_scroll(delta, "units")
+
+        inner.bind("<Configure>", on_frame_configure)
+        canvas.bind("<Configure>", on_canvas_configure)
+        canvas.bind("<MouseWheel>", on_mousewheel)
+        inner.bind("<MouseWheel>", on_mousewheel)
+        return inner
+
+    def _build_integration_guide(self, parent):
+        ttk.Label(parent, text="接入教程", style="Section.TLabel").pack(anchor=tk.W)
+        ttk.Label(
+            parent,
+            text="Fork 直接填工具路径和参数；GitHub Desktop 通过全局 Git 注入接入。",
+            style="Muted.TLabel",
+            wraplength=280,
+        ).pack(anchor=tk.W, pady=(8, 0))
+
+        tabs = ttk.Notebook(parent)
+        tabs.pack(fill=tk.X, pady=(8, 0))
+
+        fork_tab = ttk.Frame(tabs, padding=(8, 8), style="Panel.TFrame")
+        github_tab = ttk.Frame(tabs, padding=(8, 8), style="Panel.TFrame")
+        tabs.add(fork_tab, text="Fork")
+        tabs.add(github_tab, text="GitHub Desktop")
+
+        exe_path = current_executable_path()
+        self._make_copy_row(fork_tab, "工具路径", exe_path, "Merge/Diff Tool Path")
+        ttk.Label(
+            fork_tab,
+            text="Merge Tool: Preferences > Integration > Merge Tool，Merger 选 Custom。",
+            style="Muted.TLabel",
+            wraplength=285,
+        ).pack(anchor=tk.W, pady=(6, 0))
+        self._make_copy_row(fork_tab, "合并参数", "$LOCAL,$BASE,$REMOTE,$MERGED", "Arguments")
+        ttk.Label(
+            fork_tab,
+            text="External Diff Tool: Diff Tool 选 Custom，路径同上。",
+            style="Muted.TLabel",
+            wraplength=285,
+        ).pack(anchor=tk.W, pady=(6, 0))
+        self._make_copy_row(fork_tab, "对比参数", "\"$REMOTE\" \"$LOCAL\"", "Arguments")
+
+        ttk.Label(
+            github_tab,
+            text="GitHub Desktop 没有单独参数输入框。优先点击左侧「安装注入」；需要手动配置时复制下面的 driver 值。",
+            style="Muted.TLabel",
+            wraplength=285,
+        ).pack(anchor=tk.W)
+        self._make_copy_row(github_tab, "driver 值", driver_command(exe_path), "git config value")
+        self._make_copy_row(github_tab, "driver 参数", "--git-merge-driver \"%O\" \"%A\" \"%B\" \"%P\"", "args")
+        attrs_row = ttk.Frame(github_tab, style="Panel.TFrame")
+        attrs_row.pack(fill=tk.X, pady=(8, 0))
+        make_icon_button(
+            attrs_row,
+            self.root,
+            "复制 attributes",
+            "copy",
+            command=lambda: self._copy_text("\n".join(ATTR_LINES), "attributes"),
+            style="Tiny.TButton",
+        ).pack(side=tk.LEFT)
+        ttk.Label(
+            attrs_row,
+            text="匹配 %s" % EXCEL_EXTENSION_TEXT,
+            style="Muted.TLabel",
+            wraplength=170,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+    def _make_copy_row(self, parent, label_text, value, placeholder):
+        ttk.Label(parent, text=label_text, style="Panel.TLabel").pack(anchor=tk.W, pady=(8, 2))
+        row = ttk.Frame(parent, style="Panel.TFrame")
+        row.pack(fill=tk.X)
+        value_var = tk.StringVar(self.root, value=value)
+        self._copy_vars.append(value_var)
+        entry = ttk.Entry(row, textvariable=value_var, state="readonly")
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        ToolTip(entry, placeholder)
+        make_icon_button(
+            row,
+            self.root,
+            "复制",
+            "copy",
+            command=lambda: self._copy_text(value, label_text),
+            style="Tiny.TButton",
+        ).pack(side=tk.LEFT)
+
+    def _copy_text(self, value, label_text="内容"):
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(value)
+            self.root.update_idletasks()
+            gui_log("已复制：%s" % label_text, self.status_var)
+        except Exception as e:
+            gui_log("复制失败: %s" % e, self.status_var, is_error=True)
+            messagebox.showerror("复制失败", str(e))
 
     def _on_feature_changed(self):
         value = self.feature_var.get()

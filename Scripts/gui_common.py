@@ -199,6 +199,13 @@ def get_ui_icon(root, name, size=16, color=None):
         line([(10, 3), (13, 6), (10, 6), (10, 3)], muted)
         rect(6, 8, 11, 9, fg)
         rect(6, 10, 10, 11, fg)
+    elif name == "copy":
+        rect(5, 2, 13, 10, pale_gray)
+        line([(5, 2), (13, 2), (13, 10), (5, 10), (5, 2)], muted)
+        rect(3, 6, 11, 14, UI["panel"])
+        line([(3, 6), (11, 6), (11, 14), (3, 14), (3, 6)], fg)
+        rect(5, 9, 9, 10, fg)
+        rect(5, 11, 8, 12, fg)
     elif name == "folder":
         rect(2, 5, 7, 7, "#FDE68A")
         rect(2, 7, 14, 13, "#FEF3C7")
