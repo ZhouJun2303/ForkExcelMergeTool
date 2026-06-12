@@ -82,7 +82,10 @@ UI = {
 
 def resource_path(*parts):
     """返回源码/ PyInstaller 运行时均可访问的资源路径。"""
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    env_root = os.environ.get("EXCEL_MERGE_FORK_RESOURCE_ROOT")
+    if env_root:
+        base = os.path.abspath(env_root)
+    elif getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         base = sys._MEIPASS
     else:
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

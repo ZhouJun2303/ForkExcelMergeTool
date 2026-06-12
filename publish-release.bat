@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 chcp 65001 >nul
 cd /d "%~dp0"
 
-REM Default: check GitHub CLI auth, build GUI exe, run tests, publish GitHub Release.
+REM Default: check GitHub CLI auth, build full/lite exe, run tests, publish GitHub Release.
 REM Options: --no-test skips tests, --prerelease publishes a prerelease, --no-pause skips pause prompts.
 set "RUN_TEST=1"
 set "PRERELEASE=0"
@@ -49,10 +49,10 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo [1/3] Building GUI exe...
-call "%~dp0build_exe.bat" --gui
+echo [1/3] Building full and lite exe...
+call "%~dp0package.bat" --gui --dist --no-pause
 if !ERRORLEVEL! neq 0 (
-    echo ERROR: build failed
+    echo ERROR: package failed; release stopped
     if "%NO_PAUSE%"=="0" pause
     exit /b 1
 )

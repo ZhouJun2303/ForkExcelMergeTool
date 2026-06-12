@@ -52,3 +52,4 @@ desktop.ini
 # PyInstaller
 *.spec.bak
 merge_options.json
+Tools/lite_launcher/payload.zip

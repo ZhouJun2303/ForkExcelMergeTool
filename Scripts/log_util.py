@@ -14,6 +14,9 @@ from config import LOG_FILE, MERGE_OPTIONS_FILE
 
 def log_dir():
     """日志文件所在目录：打包为 exe 时为 exe 所在目录，否则为当前脚本所在目录。"""
+    home = os.environ.get("EXCEL_MERGE_FORK_HOME")
+    if home:
+        return os.path.abspath(home)
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))

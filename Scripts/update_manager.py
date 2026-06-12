@@ -31,6 +31,14 @@ from version import __version__ as APP_VERSION
 LATEST_RELEASE_API = "https://api.github.com/repos/%s/releases/latest" % GITHUB_REPO
 
 
+def update_asset_name():
+    return os.environ.get("EXCEL_MERGE_FORK_UPDATE_ASSET_NAME") or UPDATE_ASSET_NAME
+
+
+def update_sha256_asset_name():
+    return os.environ.get("EXCEL_MERGE_FORK_UPDATE_SHA256_ASSET_NAME") or UPDATE_SHA256_ASSET_NAME
+
+
 class UpdateError(Exception):
     """更新流程异常。"""
 
@@ -173,6 +181,9 @@ def _find_asset(release, asset_name):
 
 def get_current_executable():
     """返回当前可更新目标。脚本运行时返回 None，避免覆盖 .py。"""
+    launcher = os.environ.get("EXCEL_MERGE_FORK_LAUNCHER_EXE")
+    if launcher:
+        return os.path.abspath(launcher)
     if getattr(sys, "frozen", False):
         return os.path.abspath(sys.executable)
     return None
@@ -186,8 +197,8 @@ def check_for_update():
     try:
         release = _request_json(LATEST_RELEASE_API)
         latest = (release.get("tag_name") or release.get("name") or "").lstrip("vV")
-        asset = _find_asset(release, UPDATE_ASSET_NAME)
-        sha_asset = _find_asset(release, UPDATE_SHA256_ASSET_NAME)
+        asset = _find_asset(release, update_asset_name())
+        sha_asset = _find_asset(release, update_sha256_asset_name())
         available = bool(latest and asset and _is_newer(latest, APP_VERSION))
         return {
             "available": available,
@@ -208,7 +219,7 @@ def check_for_update():
 def _read_expected_sha256(asset, tmp_dir):
     if not asset:
         return None
-    sha_path = os.path.join(tmp_dir, UPDATE_SHA256_ASSET_NAME)
+    sha_path = os.path.join(tmp_dir, update_sha256_asset_name())
     _download(asset["browser_download_url"], sha_path)
     with open(sha_path, "r", encoding="utf-8") as f:
         text = f.read().strip()
@@ -231,10 +242,10 @@ def download_update(info, progress_callback=None):
     """下载最新版 exe，校验 sha256（如果 release 提供），返回临时 exe 路径。"""
     asset = info.get("asset")
     if not asset:
-        raise UpdateError("最新 Release 未找到 %s" % UPDATE_ASSET_NAME)
+        raise UpdateError("最新 Release 未找到 %s" % update_asset_name())
 
     tmp_dir = tempfile.mkdtemp(prefix="ExcelMergeForkUpdate_")
-    exe_path = os.path.join(tmp_dir, UPDATE_ASSET_NAME)
+    exe_path = os.path.join(tmp_dir, update_asset_name())
     try:
         _download_with_progress(asset["browser_download_url"], exe_path, timeout=60, progress_callback=progress_callback)
         expected = _read_expected_sha256(info.get("sha_asset"), tmp_dir)

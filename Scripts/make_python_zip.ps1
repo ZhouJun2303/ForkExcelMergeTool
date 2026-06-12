@@ -31,31 +31,9 @@ foreach ($item in $topLevel) {
     }
 }
 
-$scriptNames = @(
-    "backup_util.py",
-    "compare_core.py",
-    "config.py",
-    "conflict.py",
-    "diff_gui.py",
-    "ExcelMergeGUI.py",
-    "excel_io.py",
-    "git_util.py",
-    "git_merge_driver.py",
-    "gui_common.py",
-    "log_util.py",
-    "MergeExcelFork.py",
-    "merge_core.py",
-    "merge_gui.py",
-    "preview_core.py",
-    "update_manager.py",
-    "version.py"
-)
-
-foreach ($name in $scriptNames) {
-    $src = Join-Path (Join-Path $root "Scripts") $name
-    if (Test-Path -LiteralPath $src) {
-        Copy-Item -LiteralPath $src -Destination (Join-Path $stage "Scripts") -Force
-    }
+$scriptsSrc = Join-Path $root "Scripts"
+Get-ChildItem -LiteralPath $scriptsSrc -Filter "*.py" -File | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stage "Scripts") -Force
 }
 
 $assetSrc = Join-Path $root "Assets"
