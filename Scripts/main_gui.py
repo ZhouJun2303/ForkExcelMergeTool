@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 from app_settings import (
+    STARTUP_FEATURE_ASK_EACH_TIME,
     STARTUP_FEATURE_BACKUP_ONLY,
     STARTUP_FEATURE_MERGE_DIFF,
     load_startup_feature,
@@ -70,6 +71,7 @@ class MainWindow:
     """独立设置中心 UI。parent 存在时使用 Toplevel，否则创建 Tk 主窗口。"""
 
     FEATURE_LABELS = {
+        STARTUP_FEATURE_ASK_EACH_TIME: "每次询问",
         STARTUP_FEATURE_BACKUP_ONLY: "快速备份模式",
         STARTUP_FEATURE_MERGE_DIFF: "合并对比模式",
     }
@@ -163,6 +165,21 @@ class MainWindow:
             style="Muted.TLabel",
         ).pack(anchor=tk.W, padx=(24, 0), pady=(2, 0))
 
+        feature_c = ttk.Radiobutton(
+            left,
+            text="每次询问",
+            value=STARTUP_FEATURE_ASK_EACH_TIME,
+            variable=self.feature_var,
+            command=self._on_feature_changed,
+        )
+        feature_c.pack(anchor=tk.W, pady=(12, 0))
+        ToolTip(feature_c, "Fork、命令行或全局 Git 注入传入文件时，先选择快速备份或合并/对比。")
+        ttk.Label(
+            left,
+            text="适合大表先打开备份、小表再进入合并或对比。",
+            style="Muted.TLabel",
+        ).pack(anchor=tk.W, padx=(24, 0), pady=(2, 0))
+
         make_separator(left).pack(fill=tk.X, pady=16)
 
         ttk.Label(left, text="备份根目录", style="Section.TLabel").pack(anchor=tk.W)
@@ -238,7 +255,7 @@ class MainWindow:
         ttk.Label(right, text="启动方式", style="Section.TLabel").pack(anchor=tk.W)
         ttk.Label(
             right,
-            text="双击 exe 会打开设置中心。有文件参数时，工具会按左侧默认运行模式进入快速备份或合并对比。",
+            text="双击 exe 会打开设置中心。有文件参数时，工具会按左侧默认运行模式处理；选择“每次询问”时会先弹窗确认。",
             style="Muted.TLabel",
             wraplength=260,
         ).pack(anchor=tk.W, pady=(8, 0))

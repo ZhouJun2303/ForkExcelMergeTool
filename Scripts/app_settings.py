@@ -12,6 +12,7 @@ from log_util import merge_options_path
 STARTUP_FEATURE_OPTION = "startup_feature"
 STARTUP_FEATURE_BACKUP_ONLY = "backup_only"
 STARTUP_FEATURE_MERGE_DIFF = "merge_diff"
+STARTUP_FEATURE_ASK_EACH_TIME = "ask_each_time"
 STARTUP_FEATURE_DEFAULT = STARTUP_FEATURE_MERGE_DIFF
 
 
@@ -44,6 +45,8 @@ def load_startup_feature():
     value = data.get(STARTUP_FEATURE_OPTION, STARTUP_FEATURE_DEFAULT)
     if value == STARTUP_FEATURE_BACKUP_ONLY:
         return STARTUP_FEATURE_BACKUP_ONLY
+    if value == STARTUP_FEATURE_ASK_EACH_TIME:
+        return STARTUP_FEATURE_ASK_EACH_TIME
     return STARTUP_FEATURE_MERGE_DIFF
 
 
@@ -51,6 +54,8 @@ def save_startup_feature(value):
     data = _load_options_data()
     if value == STARTUP_FEATURE_BACKUP_ONLY:
         data[STARTUP_FEATURE_OPTION] = STARTUP_FEATURE_BACKUP_ONLY
+    elif value == STARTUP_FEATURE_ASK_EACH_TIME:
+        data[STARTUP_FEATURE_OPTION] = STARTUP_FEATURE_ASK_EACH_TIME
     else:
         data[STARTUP_FEATURE_OPTION] = STARTUP_FEATURE_MERGE_DIFF
     _save_options_data(data)

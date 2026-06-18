@@ -18,7 +18,11 @@ import sys
 import traceback
 
 from tkinter import messagebox
-from app_settings import STARTUP_FEATURE_BACKUP_ONLY, load_startup_feature
+from app_settings import (
+    STARTUP_FEATURE_ASK_EACH_TIME,
+    STARTUP_FEATURE_BACKUP_ONLY,
+    load_startup_feature,
+)
 from excel_format import merge_diff_extension_text, merge_diff_supported
 from log_util import (
     log,
@@ -42,6 +46,25 @@ def _show_unsupported_format(mode, paths):
         "可以在设置中心切换到快速备份模式，或先把文件转换为支持的格式。"
     ) % ("\n".join(paths), merge_diff_extension_text())
     show_quick_backup_panel(mode, error=msg)
+
+
+def _resolve_startup_feature(scene, file_items, unsupported_paths=None):
+    feature = load_startup_feature()
+    if feature != STARTUP_FEATURE_ASK_EACH_TIME:
+        return feature
+    from startup_choice_gui import choose_startup_feature
+
+    choice = choose_startup_feature(
+        scene,
+        file_items,
+        unsupported_paths=unsupported_paths,
+        supported_extensions=merge_diff_extension_text(),
+    )
+    if not choice:
+        log("用户取消本次启动模式选择 scene=%s" % scene)
+        return None
+    log("本次启动模式选择 scene=%s choice=%s" % (scene, choice))
+    return choice
 
 
 def _normalize_args():
@@ -119,7 +142,15 @@ def main():
                 log(msg, is_error=True)
                 print(msg, file=sys.stderr)
                 sys.exit(1)
-            if load_startup_feature() == STARTUP_FEATURE_BACKUP_ONLY:
+            unsupported = _unsupported_merge_diff_files([args[0], args[1], args[2]])
+            startup_feature = _resolve_startup_feature(
+                "git-driver",
+                [("BASE", args[0]), ("CURRENT", args[1]), ("OTHER", args[2]), ("路径", args[3])],
+                unsupported_paths=unsupported,
+            )
+            if startup_feature is None:
+                sys.exit(1)
+            if startup_feature == STARTUP_FEATURE_BACKUP_ONLY:
                 from quick_backup import quick_backup_git_driver
                 from quick_backup_gui import show_quick_backup_panel
                 try:
@@ -138,7 +169,6 @@ def main():
                     print("ERROR: 快速备份失败: %s" % e, file=sys.stderr)
                     show_quick_backup_panel("git-driver", error=e)
                     sys.exit(2)
-            unsupported = _unsupported_merge_diff_files([args[0], args[1], args[2]])
             if unsupported:
                 _show_unsupported_format("git-driver", unsupported)
                 sys.exit(1)
@@ -153,7 +183,15 @@ def main():
                     log(msg, is_error=True)
                     print("ERROR: " + msg, file=sys.stderr)
                     sys.exit(1)
-            if load_startup_feature() == STARTUP_FEATURE_BACKUP_ONLY:
+            unsupported = _unsupported_merge_diff_files([path_local, path_base, path_remote, path_merged])
+            startup_feature = _resolve_startup_feature(
+                "merge",
+                [("LOCAL", path_local), ("BASE", path_base), ("REMOTE", path_remote), ("MERGED", path_merged)],
+                unsupported_paths=unsupported,
+            )
+            if startup_feature is None:
+                sys.exit(1)
+            if startup_feature == STARTUP_FEATURE_BACKUP_ONLY:
                 from quick_backup import quick_backup_merge
                 from quick_backup_gui import show_quick_backup_panel
                 try:
@@ -166,7 +204,6 @@ def main():
                     print("ERROR: 快速备份失败: %s" % e, file=sys.stderr)
                     show_quick_backup_panel("merge", error=e)
                     sys.exit(2)
-            unsupported = _unsupported_merge_diff_files([path_local, path_base, path_remote, path_merged])
             if unsupported:
                 _show_unsupported_format("merge", unsupported)
                 sys.exit(1)
@@ -207,7 +244,15 @@ def main():
                 log(msg, is_error=True)
                 print("ERROR: " + msg, file=sys.stderr)
                 sys.exit(1)
-            if load_startup_feature() == STARTUP_FEATURE_BACKUP_ONLY:
+            unsupported = _unsupported_merge_diff_files([path_remote, path_local])
+            startup_feature = _resolve_startup_feature(
+                "compare",
+                [("REMOTE", path_remote), ("LOCAL", path_local)],
+                unsupported_paths=unsupported,
+            )
+            if startup_feature is None:
+                sys.exit(1)
+            if startup_feature == STARTUP_FEATURE_BACKUP_ONLY:
                 from quick_backup import quick_backup_compare
                 from quick_backup_gui import show_quick_backup_panel
                 try:
@@ -220,7 +265,6 @@ def main():
                     print("ERROR: 快速备份失败: %s" % e, file=sys.stderr)
                     show_quick_backup_panel("compare", error=e)
                     sys.exit(2)
-            unsupported = _unsupported_merge_diff_files([path_remote, path_local])
             if unsupported:
                 _show_unsupported_format("compare", unsupported)
                 sys.exit(1)

@@ -75,6 +75,7 @@ Options (persisted to `merge_options.json`):
 - **E**: Add new sheets
 - **F**: Delete sheets
 - **G**: Resolve conflicts
+- **startup_feature**: Startup routing for file-argument launches. Values are `backup_only`, `merge_diff`, or `ask_each_time`; `ask_each_time` opens a choice dialog before running quick backup or merge/diff and does not overwrite the persisted default.
 - **backup_root_dir**: Optional custom backup root. Backups are written as `root/project/timestamp__excel__commit-labels/*__{local|remote|merged}__commit-label.xlsx`; empty uses `MERGED` directory + `MergeExcelBackup`. Long file names are shortened with a stable hash.
 - **Merge/diff formats**: full merge/diff parsing supports `.xlsx` and `.xltx`; macro formats such as `.xlsm`/`.xltm` should use quick backup mode to avoid losing VBA on save.
 
