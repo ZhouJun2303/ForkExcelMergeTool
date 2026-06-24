@@ -34,9 +34,18 @@ def _to_git_path(path):
 
 
 def current_executable_path():
+    launcher = os.environ.get("EXCEL_MERGE_FORK_LAUNCHER_EXE")
+    if launcher and os.path.isfile(launcher):
+        return os.path.abspath(launcher)
     if getattr(sys, "frozen", False):
         return os.path.abspath(sys.executable)
-    return os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "ExcelMergeFork.exe"))
+
+    root = os.environ.get("EXCEL_MERGE_FORK_HOME") or os.path.dirname(os.path.dirname(__file__))
+    for name in ("ExcelMergeFork.exe", "ExcelMergeFork-lite.exe", "ExcelMergeFork-python.cmd"):
+        path = os.path.join(root, name)
+        if os.path.isfile(path):
+            return os.path.abspath(path)
+    return os.path.abspath(os.path.join(root, "ExcelMergeFork.exe"))
 
 
 def driver_command(exe_path=None):

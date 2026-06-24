@@ -20,6 +20,10 @@ New-Item -ItemType Directory -Path (Join-Path $stage "Scripts") | Out-Null
 $topLevel = @(
     "MergeExcelFork.py",
     "ExcelMergeFork-python.cmd",
+    "install_fork_integration.bat",
+    "uninstall_fork_integration.bat",
+    "install_git_integration.bat",
+    "uninstall_git_integration.bat",
     "requirements.txt",
     "README.md"
 )

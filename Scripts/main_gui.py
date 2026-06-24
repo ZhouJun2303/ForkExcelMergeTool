@@ -16,6 +16,11 @@ from app_settings import (
 )
 from backup_util import load_saved_backup_root, save_backup_root
 from excel_format import merge_diff_extension_text
+from fork_integration import (
+    install_fork_integration,
+    integration_status as fork_integration_status,
+    uninstall_fork_integration,
+)
 from git_integration import (
     ATTR_LINES,
     EXCEL_EXTENSION_TEXT,
@@ -85,10 +90,12 @@ class MainWindow:
         self.status_var = tk.StringVar(self.root, value="")
         self.feature_var = tk.StringVar(self.root, value=load_startup_feature())
         self.backup_root_var = tk.StringVar(self.root, value=load_saved_backup_root())
+        self.fork_status_var = tk.StringVar(self.root, value="")
+        self.fork_detail_var = tk.StringVar(self.root, value="")
         self.git_status_var = tk.StringVar(self.root, value="")
         self.git_detail_var = tk.StringVar(self.root, value="")
-        self.git_progress_var = tk.IntVar(self.root, value=0)
-        self.git_busy = False
+        self.integration_progress_var = tk.IntVar(self.root, value=0)
+        self.integration_busy = False
         self._copy_vars = []
         self.update_controller = None
         self.root.title("ExcelMergeFork 设置中心 v%s" % APP_VERSION)
@@ -101,7 +108,7 @@ class MainWindow:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
         install_global_button_loading(self.root)
-        self._refresh_git_status()
+        self._refresh_integration_status()
         if self.update_controller:
             self.update_controller.start_background_check()
 
@@ -121,7 +128,7 @@ class MainWindow:
         make_badge(headline, "v%s" % APP_VERSION, "primary").pack(side=tk.LEFT, padx=(10, 0))
         ttk.Label(
             title_text,
-            text="管理默认模式、备份目录、全局 Git 注入和程序更新。",
+            text="管理默认模式、备份目录、Fork/Git 注入和程序更新。",
             style="Subtitle.TLabel",
         ).pack(anchor=tk.W, pady=(2, 0))
 
@@ -199,6 +206,25 @@ class MainWindow:
         ttk.Label(left, textvariable=self.current_feature_var, style="Panel.TLabel").pack(anchor=tk.W, pady=(16, 0))
 
         make_separator(left).pack(fill=tk.X, pady=16)
+        ttk.Label(left, text="Fork 一键注入", style="Section.TLabel").pack(anchor=tk.W)
+        ttk.Label(
+            left,
+            text="安装后，Fork 的 Merge Tool 和 External Diff Tool 会直接指向本工具。请先关闭 Fork 再安装或移除。",
+            style="Muted.TLabel",
+            wraplength=430,
+        ).pack(anchor=tk.W, pady=(8, 0))
+        ttk.Label(left, textvariable=self.fork_status_var, style="Panel.TLabel").pack(anchor=tk.W, pady=(8, 0))
+        ttk.Label(left, textvariable=self.fork_detail_var, style="Muted.TLabel", wraplength=430).pack(anchor=tk.W, pady=(2, 0))
+        fork_btn_row = ttk.Frame(left, style="Panel.TFrame")
+        fork_btn_row.pack(fill=tk.X, pady=(8, 0))
+        self.btn_fork_install = make_icon_button(fork_btn_row, self.root, "安装注入", "check", command=self._install_fork_integration, style="Secondary.TButton")
+        self.btn_fork_install.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_fork_uninstall = make_icon_button(fork_btn_row, self.root, "移除注入", "cancel", command=self._uninstall_fork_integration, style="Secondary.TButton")
+        self.btn_fork_uninstall.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_integration_refresh = make_icon_button(fork_btn_row, self.root, "刷新状态", "refresh", command=self._refresh_integration_status, style="Secondary.TButton")
+        self.btn_integration_refresh.pack(side=tk.LEFT)
+
+        make_separator(left).pack(fill=tk.X, pady=16)
         ttk.Label(left, text="全局 Git 注入", style="Section.TLabel").pack(anchor=tk.W)
         ttk.Label(
             left,
@@ -214,13 +240,11 @@ class MainWindow:
         self.btn_git_install.pack(side=tk.LEFT, padx=(0, 8))
         self.btn_git_uninstall = make_icon_button(git_btn_row, self.root, "移除注入", "cancel", command=self._uninstall_git_integration, style="Secondary.TButton")
         self.btn_git_uninstall.pack(side=tk.LEFT, padx=(0, 8))
-        self.btn_git_refresh = make_icon_button(git_btn_row, self.root, "刷新状态", "refresh", command=self._refresh_git_status, style="Secondary.TButton")
-        self.btn_git_refresh.pack(side=tk.LEFT)
-        self.git_progress_row = ttk.Frame(left, style="Panel.TFrame")
-        self.git_progress_label = ttk.Label(self.git_progress_row, text="", style="Muted.TLabel")
-        self.git_progress_label.pack(side=tk.LEFT, padx=(0, 8))
-        self.git_progress_bar = ttk.Progressbar(self.git_progress_row, variable=self.git_progress_var, mode="indeterminate", length=180)
-        self.git_progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.integration_progress_row = ttk.Frame(left, style="Panel.TFrame")
+        self.integration_progress_label = ttk.Label(self.integration_progress_row, text="", style="Muted.TLabel")
+        self.integration_progress_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.integration_progress_bar = ttk.Progressbar(self.integration_progress_row, variable=self.integration_progress_var, mode="indeterminate", length=180)
+        self.integration_progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         (
             update_card,
@@ -301,7 +325,7 @@ class MainWindow:
         ttk.Label(parent, text="接入教程", style="Section.TLabel").pack(anchor=tk.W)
         ttk.Label(
             parent,
-            text="Fork 直接填工具路径和参数；GitHub Desktop 通过全局 Git 注入接入。",
+            text="Fork 优先使用一键注入；需要手动配置时复制下面的路径和参数。",
             style="Muted.TLabel",
             wraplength=280,
         ).pack(anchor=tk.W, pady=(8, 0))
@@ -318,7 +342,7 @@ class MainWindow:
         self._make_copy_row(fork_tab, "工具路径", exe_path, "Merge/Diff Tool Path")
         ttk.Label(
             fork_tab,
-            text="Merge Tool: Preferences > Integration > Merge Tool，Merger 选 Custom。",
+            text="推荐点击左侧「Fork 一键注入」。手动配置时：Merge Tool 选 Custom。",
             style="Muted.TLabel",
             wraplength=285,
         ).pack(anchor=tk.W, pady=(6, 0))
@@ -333,7 +357,7 @@ class MainWindow:
 
         ttk.Label(
             github_tab,
-            text="GitHub Desktop 没有单独参数输入框。优先点击左侧「安装注入」；需要手动配置时复制下面的 driver 值。",
+            text="GitHub Desktop 没有单独参数输入框。优先点击左侧「全局 Git 注入」安装；需要手动配置时复制下面的 driver 值。",
             style="Muted.TLabel",
             wraplength=285,
         ).pack(anchor=tk.W)
@@ -429,13 +453,38 @@ class MainWindow:
         if not open_containing_folder(root_dir, select_file=False):
             messagebox.showwarning("提示", "无法打开备份目录")
 
-    def _refresh_git_status(self):
-        if self.git_busy:
+    def _refresh_integration_status(self):
+        if self.integration_busy:
             return
-        self._run_git_task("正在刷新注入状态...", self._read_git_status, self._finish_git_refresh)
+        self._run_integration_task("正在刷新注入状态...", self._read_integration_status, self._finish_integration_refresh)
 
-    def _read_git_status(self):
-        return integration_status()
+    def _read_integration_status(self):
+        return {
+            "fork": fork_integration_status(),
+            "git": integration_status(),
+        }
+
+    def _apply_integration_status(self, statuses):
+        self._apply_fork_status(statuses.get("fork") or {})
+        self._apply_git_status(statuses.get("git") or {})
+
+    def _apply_fork_status(self, status):
+        try:
+            if not status.get("settings_exists"):
+                self.fork_status_var.set("状态：未检测到 Fork 配置")
+            elif status.get("installed"):
+                self.fork_status_var.set("状态：已安装 Fork 注入")
+            else:
+                self.fork_status_var.set("状态：未安装或配置不完整")
+            self.fork_detail_var.set("目标程序：%s\nFork 配置：%s\n合并参数：%s\n对比参数：%s" % (
+                status.get("tool_path") or current_executable_path(),
+                status.get("settings_path") or "",
+                "$LOCAL,$BASE,$REMOTE,$MERGED",
+                "\"$REMOTE\" \"$LOCAL\"",
+            ))
+        except Exception as e:
+            self.fork_status_var.set("状态：读取失败")
+            self.fork_detail_var.set(str(e))
 
     def _apply_git_status(self, status):
         try:
@@ -456,9 +505,43 @@ class MainWindow:
             self.git_status_var.set("状态：读取失败")
             self.git_detail_var.set(str(e))
 
-    def _finish_git_refresh(self, status):
-        self._apply_git_status(status)
-        gui_log("全局 Git 注入状态已刷新", self.status_var)
+    def _finish_integration_refresh(self, statuses):
+        self._apply_integration_status(statuses)
+        gui_log("注入状态已刷新", self.status_var)
+
+    def _install_fork_integration(self):
+        exe_path = current_executable_path()
+        if not os.path.isfile(exe_path):
+            messagebox.showwarning(
+                "无法安装",
+                "未找到工具程序：\n%s\n\n请确认当前分发包完整，或重新下载 exe。" % exe_path,
+            )
+            self._refresh_integration_status()
+            return
+        if not messagebox.askokcancel(
+            "安装 Fork 注入",
+            "这会备份并修改 Fork 的 settings.json，把 Merge Tool 和 External Diff Tool 指向：\n%s\n\n请先关闭 Fork，避免 Fork 退出时覆盖本次写入。" % exe_path,
+        ):
+            return
+        self._run_integration_task(
+            "正在安装 Fork 注入...",
+            lambda: install_fork_integration(exe_path),
+            self._finish_fork_install,
+            error_title="安装 Fork 注入失败",
+        )
+
+    def _uninstall_fork_integration(self):
+        if not messagebox.askokcancel(
+            "移除 Fork 注入",
+            "这会备份并修改 Fork 的 settings.json，只移除 ExcelMergeFork 写入的 Fork 工具配置。请先关闭 Fork。",
+        ):
+            return
+        self._run_integration_task(
+            "正在移除 Fork 注入...",
+            lambda: uninstall_fork_integration(current_executable_path()),
+            self._finish_fork_uninstall,
+            error_title="移除 Fork 注入失败",
+        )
 
     def _install_git_integration(self):
         exe_path = current_executable_path()
@@ -467,14 +550,14 @@ class MainWindow:
                 "无法安装",
                 "未找到 ExcelMergeFork.exe：\n%s\n\n请先打包 exe，或把 exe 放在项目根目录后再安装全局 Git 注入。" % exe_path,
             )
-            self._refresh_git_status()
+            self._refresh_integration_status()
             return
         if not messagebox.askokcancel(
             "安装全局 Git 注入",
             "这会写入用户级 Git 配置，并让所有 Git 工具在常见 Excel 后缀冲突时调用：\n%s\n\n快速备份模式可直接备份这些文件；合并对比模式依赖当前 Excel 解析能力。" % exe_path,
         ):
             return
-        self._run_git_task(
+        self._run_integration_task(
             "正在安装全局 Git 注入...",
             lambda: install_global_integration(exe_path),
             self._finish_git_install,
@@ -484,12 +567,22 @@ class MainWindow:
     def _uninstall_git_integration(self):
         if not messagebox.askokcancel("移除全局 Git 注入", "这会移除 ExcelMergeFork 写入的用户级 Git 配置和 attributes 条目。"):
             return
-        self._run_git_task(
+        self._run_integration_task(
             "正在移除全局 Git 注入...",
             uninstall_global_integration,
             self._finish_git_uninstall,
             error_title="移除失败",
         )
+
+    def _finish_fork_install(self, status):
+        self._apply_fork_status(status)
+        gui_log("已安装 Fork 注入", self.status_var)
+        messagebox.showinfo("已安装", "Fork 注入已安装。重新打开 Fork 后即可使用。")
+
+    def _finish_fork_uninstall(self, status):
+        self._apply_fork_status(status)
+        gui_log("已移除 Fork 注入", self.status_var)
+        messagebox.showinfo("已移除", "Fork 注入已移除。")
 
     def _finish_git_install(self, status):
         self._apply_git_status(status)
@@ -501,45 +594,49 @@ class MainWindow:
         gui_log("已移除全局 Git 注入", self.status_var)
         messagebox.showinfo("已移除", "全局 Git 注入已移除。")
 
-    def _set_git_busy(self, busy, text=""):
-        self.git_busy = busy
-        set_global_busy(self.root, "git_integration", busy, text or "正在处理 Git 注入...")
+    def _set_integration_busy(self, busy, text=""):
+        self.integration_busy = busy
+        set_global_busy(self.root, "integration", busy, text or "正在处理注入...")
         state = tk.DISABLED if busy else tk.NORMAL
-        for btn in (getattr(self, "btn_git_install", None), getattr(self, "btn_git_uninstall", None), getattr(self, "btn_git_refresh", None)):
+        for btn in (
+            getattr(self, "btn_fork_install", None),
+            getattr(self, "btn_fork_uninstall", None),
+            getattr(self, "btn_integration_refresh", None),
+            getattr(self, "btn_git_install", None),
+            getattr(self, "btn_git_uninstall", None),
+        ):
             if btn is not None:
                 btn.config(state=state)
         if busy:
-            self.git_status_var.set(text)
-            self.git_progress_label.config(text=text)
-            self.git_progress_row.pack(fill=tk.X, pady=(8, 0))
-            self.git_progress_bar.start(12)
+            self.integration_progress_label.config(text=text)
+            self.integration_progress_row.pack(fill=tk.X, pady=(8, 0))
+            self.integration_progress_bar.start(12)
         else:
-            self.git_progress_bar.stop()
-            self.git_progress_var.set(0)
-            self.git_progress_label.config(text="")
-            self.git_progress_row.pack_forget()
+            self.integration_progress_bar.stop()
+            self.integration_progress_var.set(0)
+            self.integration_progress_label.config(text="")
+            self.integration_progress_row.pack_forget()
 
-    def _run_git_task(self, busy_text, worker_func, success_func, error_title="操作失败"):
-        if self.git_busy:
+    def _run_integration_task(self, busy_text, worker_func, success_func, error_title="操作失败"):
+        if self.integration_busy:
             return
-        self._set_git_busy(True, busy_text)
+        self._set_integration_busy(True, busy_text)
         run_loading_task(
             self.root,
-            "git_integration_worker",
+            "integration_worker",
             busy_text,
             worker_func,
-            lambda result: self._finish_git_task(result, success_func),
-            lambda err: self._finish_git_task_error(err, error_title),
+            lambda result: self._finish_integration_task(result, success_func),
+            lambda err: self._finish_integration_task_error(err, error_title),
         )
 
-    def _finish_git_task(self, result, success_func):
-        self._set_git_busy(False)
+    def _finish_integration_task(self, result, success_func):
+        self._set_integration_busy(False)
         success_func(result)
 
-    def _finish_git_task_error(self, err, error_title):
-        self._set_git_busy(False)
+    def _finish_integration_task_error(self, err, error_title):
+        self._set_integration_busy(False)
         gui_log("%s: %s" % (error_title, err), self.status_var, is_error=True)
-        self.git_status_var.set("状态：操作失败，请稍后刷新")
         messagebox.showerror(error_title, str(err))
 
     def activate(self):

@@ -78,6 +78,14 @@ def _normalize_args():
         return "main", []
     if raw and raw[0] == "--main":
         return "main", raw[1:]
+    if raw and raw[0] == "--install-fork-integration":
+        return "install-fork-integration", raw[1:]
+    if raw and raw[0] == "--uninstall-fork-integration":
+        return "uninstall-fork-integration", raw[1:]
+    if raw and raw[0] == "--install-git-integration":
+        return "install-git-integration", raw[1:]
+    if raw and raw[0] == "--uninstall-git-integration":
+        return "uninstall-git-integration", raw[1:]
     if raw and raw[0] == "--git-merge-driver":
         return "git-driver", raw[1:]
     raw = list(raw)
@@ -134,6 +142,53 @@ def main():
             from main_gui import MainWindow
             win = MainWindow()
             win.run()
+            sys.exit(0)
+
+        if mode == "install-fork-integration":
+            from fork_integration import install_fork_integration
+            tool_path = args[0] if args else None
+            status = install_fork_integration(tool_path=tool_path)
+            msg = "Fork 注入完成: %s" % status.get("settings_path")
+            print(msg, file=sys.stdout)
+            try:
+                messagebox.showinfo("Fork 注入完成", msg)
+            except Exception:
+                pass
+            sys.exit(0)
+
+        if mode == "uninstall-fork-integration":
+            from fork_integration import uninstall_fork_integration
+            tool_path = args[0] if args else None
+            status = uninstall_fork_integration(tool_path=tool_path)
+            msg = "Fork 注入已移除: %s" % status.get("settings_path")
+            print(msg, file=sys.stdout)
+            try:
+                messagebox.showinfo("Fork 注入已移除", msg)
+            except Exception:
+                pass
+            sys.exit(0)
+
+        if mode == "install-git-integration":
+            from git_integration import current_executable_path, install_global_integration
+            tool_path = args[0] if args else current_executable_path()
+            status = install_global_integration(tool_path)
+            msg = "全局 Git 注入完成: %s" % status.get("attributes_file")
+            print(msg, file=sys.stdout)
+            try:
+                messagebox.showinfo("全局 Git 注入完成", msg)
+            except Exception:
+                pass
+            sys.exit(0)
+
+        if mode == "uninstall-git-integration":
+            from git_integration import uninstall_global_integration
+            status = uninstall_global_integration()
+            msg = "全局 Git 注入已移除: %s" % status.get("attributes_file")
+            print(msg, file=sys.stdout)
+            try:
+                messagebox.showinfo("全局 Git 注入已移除", msg)
+            except Exception:
+                pass
             sys.exit(0)
 
         if mode == "git-driver":

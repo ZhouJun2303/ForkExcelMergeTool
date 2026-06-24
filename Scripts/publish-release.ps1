@@ -51,14 +51,17 @@ ExcelMergeFork $Tag
 发布日期：$date
 
 下载建议：
-- 推荐普通用户下载 ExcelMergeFork.exe：单文件版，无需安装 Python。
-- 已有 Python 环境、想要更小体积的用户下载 ExcelMergeFork-lite.exe：不内置 Python，需 Python 3.7+ 和 openpyxl。
+- 推荐普通用户下载 ExcelMergeFork-package.zip：包含单文件版、README 和一键安装/移除 Fork 注入脚本。
+- 只想手动配置的用户也可以单独下载 ExcelMergeFork.exe：单文件版，无需安装 Python。
+- 已有 Python 环境、想要更小体积的用户下载 ExcelMergeFork-lite-package.zip 或 ExcelMergeFork-lite.exe：不内置 Python，需 Python 3.7+ 和 openpyxl。
 
 两个版本：
 - ExcelMergeFork.exe：完整独立版，Fork 里直接配置此 exe 路径。
 - ExcelMergeFork-lite.exe：轻量启动器 exe，运行时检查 Python 环境；缺少环境会弹窗提示安装方法。
 
 Fork 配置：
+- 最方便：关闭 Fork 后双击 install_fork_integration.bat；移除时双击 uninstall_fork_integration.bat。
+- 单独下载 exe 的用户可双击 exe 打开设置中心，点击「Fork 一键注入」里的安装/移除。
 - Merge Tool Path / Diff Tool Path 填所下载 exe 的完整路径。
 - Merge Arguments：`$LOCAL,`$BASE,`$REMOTE,`$MERGED
 - Diff Arguments："`$REMOTE" "`$LOCAL"
@@ -75,6 +78,8 @@ Fork 配置：
 - 已运行 run_merge_mode_tests.bat
 
 上传资产：
+- ExcelMergeFork-package.zip
+- ExcelMergeFork-lite-package.zip
 - ExcelMergeFork.exe
 - ExcelMergeFork.exe.sha256
 - ExcelMergeFork-lite.exe
@@ -192,6 +197,17 @@ if (-not (Test-Path -LiteralPath $liteExe)) {
 $fullSha = New-Sha256File -Path $exe -AssetName "ExcelMergeFork.exe"
 $liteSha = New-Sha256File -Path $liteExe -AssetName "ExcelMergeFork-lite.exe"
 
+& powershell -NoProfile -ExecutionPolicy Bypass -File ".\Scripts\make_distribution_zip.ps1" -Kind full
+if ($LASTEXITCODE -ne 0) {
+    throw "完整分发包生成失败"
+}
+& powershell -NoProfile -ExecutionPolicy Bypass -File ".\Scripts\make_distribution_zip.ps1" -Kind lite
+if ($LASTEXITCODE -ne 0) {
+    throw "轻量分发包生成失败"
+}
+$fullPackage = Join-Path $root "dist\ExcelMergeFork-package.zip"
+$litePackage = Join-Path $root "dist\ExcelMergeFork-lite-package.zip"
+
 Write-Host "Version: $version"
 Write-Host "Tag: $tag"
 Write-Host "ExcelMergeFork.exe SHA256: $($fullSha.Hash)"
@@ -219,6 +235,8 @@ if ($target) {
 
 $ghArgs = @(
     "release", "create", $tag,
+    $fullPackage,
+    $litePackage,
     $exe,
     $fullSha.Path,
     $liteExe,

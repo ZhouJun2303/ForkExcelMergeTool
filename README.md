@@ -23,11 +23,12 @@ Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Too
 
 **推荐分发方式**：
 
-- 无 Python 环境：从 GitHub Releases 下载最新版 `ExcelMergeFork.exe`，开箱即用。
-- 已有 Python 环境且想要更小体积：下载 `ExcelMergeFork-lite.exe`。如果缺少依赖，按弹窗提示安装 Python 3.7+ 和 `openpyxl` 后重试。
+- 无 Python 环境：从 GitHub Releases 下载最新版 `ExcelMergeFork-package.zip`，解压后双击 `install_fork_integration.bat` 即可注入 Fork。
+- 只想手动配置：也可以单独下载 `ExcelMergeFork.exe`，开箱即用；双击 exe 可在设置中心里安装/移除 Fork 注入。
+- 已有 Python 环境且想要更小体积：下载 `ExcelMergeFork-lite-package.zip` 或 `ExcelMergeFork-lite.exe`。如果缺少依赖，按弹窗提示安装 Python 3.7+ 和 `openpyxl` 后重试。
 - 需要源码形式轻量包：仍可使用 `ExcelMergeFork-python.zip`，先执行 `pip install -r requirements.txt`，Fork 指向 `ExcelMergeFork-python.cmd`。
 
-**最小 exe 分发包**：只需 `ExcelMergeFork.exe` 或 `ExcelMergeFork-lite.exe` + 本 `README.md`。Fork 里配置的是 exe 的完整路径，后续应用内更新会原地替换当前版本对应的 exe，Fork 配置不用改。
+**最小 exe 分发包**：只需 `ExcelMergeFork.exe` 或 `ExcelMergeFork-lite.exe` + 本 `README.md`。Fork 里配置的是 exe 的完整路径，后续应用内更新会原地替换当前版本对应的 exe，Fork 配置不用改。若要让同事双击完成配置，请分发对应的 `*-package.zip`，里面包含安装/移除脚本。
 
 ### 2.1 更新方式
 
@@ -66,7 +67,23 @@ uninstall_git_integration.bat
 
 ## 三、在 Fork 里怎么配置（必读）
 
-### 3.1 合并工具（解决 Excel 冲突）
+### 3.1 一键注入（推荐）
+
+关闭 Fork 后执行：
+
+```text
+install_fork_integration.bat
+```
+
+这会备份并修改 `%LOCALAPPDATA%\Fork\settings.json`，把 Fork 的 **Merge Tool** 和 **External Diff Tool** 设置为当前目录里的 `ExcelMergeFork.exe` / `ExcelMergeFork-lite.exe` / `ExcelMergeFork-python.cmd`。移除：
+
+```text
+uninstall_fork_integration.bat
+```
+
+如果只下载了单个 exe，也可以双击 exe 打开设置中心，在 **Fork 一键注入** 区域点击「安装注入」或「移除注入」。Fork 正在运行时可能会在退出时覆盖配置，所以建议先关闭 Fork 再操作。
+
+### 3.2 手动配置合并工具（解决 Excel 冲突）
 
 当 Git 合并产生冲突且冲突文件是 Excel 工作簿时，用本工具来选「保留本地」或「保留线上」。
 
@@ -80,7 +97,7 @@ uninstall_git_integration.bat
 
 保存后，在 Fork 里对冲突的 Excel 执行「解决冲突」时会自动用本工具打开。
 
-### 3.2 对比工具（查看 Excel 差异）
+### 3.3 手动配置对比工具（查看 Excel 差异）
 
 用于在 Fork 里对比「当前分支」和「其它分支」的同一 Excel 文件差异。
 
@@ -252,6 +269,7 @@ ExcelMergeFork.exe --git-merge-driver <base> <current> <other> <repo-path>
 - **一键打包**：双击 **`package.bat`**，会自动安装依赖、打包 `ExcelMergeFork.exe` 和 `ExcelMergeFork-lite.exe`，并做一次快速验证。
 - **只打包完整 exe**：执行 `package.bat --full-only`。
 - **只打包轻量 exe**：执行 `package.bat --lite-only`。
+- **生成分发包 zip**：执行 `package.bat --dist --package-zip`，生成 `dist\ExcelMergeFork-package.zip` 和 `dist\ExcelMergeFork-lite-package.zip`，包含 exe、README 和 Fork 注入安装/移除脚本。
 - **生成 Python 轻量包**：执行 `package.bat --dist --python-zip`，只生成 `dist\ExcelMergeFork-python.zip`，适合本机已有 Python 的用户。
 - **一键发布 Release**：维护者直接双击或执行 **`publish-release.bat`**，默认会打包、测试并发布。需要本机已安装 GitHub CLI，并先执行过 `gh auth login`，且账号有本仓库 Release 写权限。
 - **预览 Release 描述**：执行 `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts\publish-release.ps1 -PrintNotes`。
@@ -265,6 +283,8 @@ ExcelMergeFork.exe --git-merge-driver <base> <current> <other> <repo-path>
 
 发布脚本会读取 `Scripts\version.py` 的 `__version__`，创建形如 `v2.54` 的 GitHub Release。Release 描述会自动写清楚两个版本的区别、下载建议、Fork 配置方式、更新说明、校验文件和验证命令，并上传：
 
+- `ExcelMergeFork-package.zip`
+- `ExcelMergeFork-lite-package.zip`
 - `ExcelMergeFork.exe`
 - `ExcelMergeFork.exe.sha256`
 - `ExcelMergeFork-lite.exe`
