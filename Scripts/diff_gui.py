@@ -17,6 +17,7 @@ from gui_common import (
     ToolTip,
     UI,
     apply_app_icon,
+    bring_window_to_front,
     configure_button_icon,
     gui_log,
     install_global_button_loading,
@@ -163,6 +164,7 @@ class DiffWindow:
         install_global_button_loading(self.root)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         _diff_instance = self
+        self.root.after(0, lambda: bring_window_to_front(self.root))
         self.root.after(80, self._start_compare_async)
 
     def _apply_baseline(self):
@@ -288,8 +290,7 @@ class DiffWindow:
         self._apply_baseline()
         self._update_baseline_display()
         self._start_compare_async()
-        self.root.lift()
-        self.root.focus_force()
+        bring_window_to_front(self.root)
 
     def _build_ui(self):
         pad = 14

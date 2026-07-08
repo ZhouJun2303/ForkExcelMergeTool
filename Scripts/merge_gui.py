@@ -34,6 +34,7 @@ from gui_common import (
     ToolTip,
     UI,
     apply_app_icon,
+    bring_window_to_front,
     configure_button_icon,
     gui_log,
     install_global_button_loading,
@@ -206,6 +207,7 @@ class MergeWindow:
         self._build_ui()
         install_global_button_loading(self.root)
         self._schedule_preview_refresh()
+        self.root.after(0, lambda: bring_window_to_front(self.root))
 
     def _build_ui(self):
         pad = 14
@@ -899,8 +901,7 @@ class MergeWindow:
             self.target_path_var.set(self._short_path(self.path_merged, 112))
         self._preview_cache.clear()
         self._schedule_preview_refresh(delay_ms=0)
-        self.root.lift()
-        self.root.focus_force()
+        bring_window_to_front(self.root)
 
     def _on_confirm_done(self):
         global _merge_instance

@@ -59,6 +59,42 @@ def gui_log(msg, log_widget=None, is_error=False):
             pass
 
 
+def bring_window_to_front(root, release_topmost_ms=800):
+    """Temporarily mark a Tk window topmost so Windows brings it to the foreground."""
+    if root is None:
+        return
+
+    def _set_topmost(value):
+        try:
+            if root.winfo_exists():
+                root.attributes("-topmost", value)
+        except Exception:
+            pass
+
+    try:
+        root.deiconify()
+    except Exception:
+        pass
+    try:
+        root.update_idletasks()
+    except Exception:
+        pass
+    try:
+        root.lift()
+    except Exception:
+        pass
+    _set_topmost(True)
+    if release_topmost_ms is not None and release_topmost_ms >= 0:
+        try:
+            root.after(release_topmost_ms, lambda: _set_topmost(False))
+        except Exception:
+            _set_topmost(False)
+    try:
+        root.focus_force()
+    except Exception:
+        pass
+
+
 UI = {
     "bg": "#F4F7FB",
     "panel": "#FFFFFF",

@@ -1,12 +1,12 @@
 {
-  "checked_at": 1781253726.256269,
+  "checked_at": 1782284827.902401,
   "info": {
     "available": false,
-    "current_version": "2.69",
-    "latest_version": "2.56",
-    "html_url": "https://github.com/ZhouJun2303/ForkExcelMergeTool/releases/tag/v2.56",
-    "body": "ExcelMergeFork v2.56\n\n- Windows 单文件版: ExcelMergeFork.exe\n- SHA256: 见 ExcelMergeFork.exe.sha256",
-    "published_at": "2026-05-29T06:31:32Z",
+    "current_version": "2.76",
+    "latest_version": "2.76",
+    "html_url": "https://github.com/ZhouJun2303/ForkExcelMergeTool/releases/tag/v2.76",
+    "body": "ExcelMergeFork v2.76\n\n发布日期：2026-06-18\n\n下载建议：\n- 推荐普通用户下载 ExcelMergeFork.exe：单文件版，无需安装 Python。\n- 已有 Python 环境、想要更小体积的用户下载 ExcelMergeFork-lite.exe：不内置 Python，需 Python 3.7+ 和 openpyxl。\n\n两个版本：\n- ExcelMergeFork.exe：完整独立版，Fork 里直接配置此 exe 路径。\n- ExcelMergeFork-lite.exe：轻量启动器 exe，运行时检查 Python 环境；缺少环境会弹窗提示安装方法。\n\nFork 配置：\n- Merge Tool Path / Diff Tool Path 填所下载 exe 的完整路径。\n- Merge Arguments：$LOCAL,$BASE,$REMOTE,$MERGED\n- Diff Arguments：$REMOTE $LOCAL\n\n更新说明：\n- 完整版会更新为新的 ExcelMergeFork.exe。\n- 轻量版会更新为新的 ExcelMergeFork-lite.exe，不会自动切换成完整版。\n\n校验文件：\n- ExcelMergeFork.exe.sha256\n- ExcelMergeFork-lite.exe.sha256\n\n验证：\n- 已运行 run_merge_mode_tests.bat\n\n上传资产：\n- ExcelMergeFork.exe\n- ExcelMergeFork.exe.sha256\n- ExcelMergeFork-lite.exe\n- ExcelMergeFork-lite.exe.sha256",
+    "published_at": "2026-06-18T10:12:53Z",
     "missing_asset": false
   }
 }
