@@ -124,6 +124,12 @@ def _normalize_args():
 
 def main():
     try:
+        try:
+            from companion_tools import register_current_app
+            from version import __version__
+            register_current_app(__version__)
+        except Exception as registration_error:
+            log("登记伴随工具失败: %s" % registration_error, is_error=True)
         mode, args = _normalize_args()
         argc = len(args)
         log("解析后 argc=%d args=%s" % (argc, args))

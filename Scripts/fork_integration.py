@@ -9,6 +9,8 @@ import shutil
 import sys
 from datetime import datetime
 
+from companion_tools import dispatcher_selection
+
 
 TOOL_NAME = "ExcelMergeFork"
 MERGE_ARGS = "$LOCAL,$BASE,$REMOTE,$MERGED"
@@ -83,6 +85,8 @@ def _upsert_tool(tools, name, path, arguments, set_primary=False):
             tool["Arguments"] = arguments
             if set_primary:
                 tool["IsPrimary"] = True
+            elif "IsPrimary" in tool:
+                tool["IsPrimary"] = False
             found = True
         elif set_primary and "IsPrimary" in tool:
             tool["IsPrimary"] = False
@@ -158,13 +162,14 @@ def install_fork_integration(tool_path=None, settings_path=None, tool_name=TOOL_
     settings = _read_settings(settings_path)
     merge_tools = _ensure_list(settings, "ExternalMergeTools")
     diff_tools = _ensure_list(settings, "ExternalDiffTools")
+    dispatcher_active = dispatcher_selection(settings)
 
     settings["ExternalMergeTools"] = _upsert_tool(
         merge_tools,
         tool_name,
         tool_path,
         MERGE_ARGS,
-        set_primary=True,
+        set_primary=not dispatcher_active,
     )
     settings["ExternalDiffTools"] = _upsert_tool(
         diff_tools,
@@ -173,11 +178,12 @@ def install_fork_integration(tool_path=None, settings_path=None, tool_name=TOOL_
         DIFF_ARGS,
         set_primary=False,
     )
-    settings["MergeTool"] = {
-        "Type": "Custom",
-        "ApplicationPath": tool_path,
-        "Arguments": MERGE_ARGS,
-    }
+    if not dispatcher_active:
+        settings["MergeTool"] = {
+            "Type": "Custom",
+            "ApplicationPath": tool_path,
+            "Arguments": MERGE_ARGS,
+        }
     settings["ExternalDiffTool"] = {
         "Type": "Custom",
         "ApplicationPath": tool_path,
@@ -246,13 +252,21 @@ def integration_status(tool_path=None, settings_path=None, backup_path=None):
     settings = _read_settings(settings_path)
     merge_tool = settings.get("MergeTool") or {}
     diff_tool = settings.get("ExternalDiffTool") or {}
+    merge_tools = _ensure_list(settings, "ExternalMergeTools")
+    listed = any(
+        _is_managed_tool(tool, TOOL_NAME, tool_path)
+        and _norm_path(tool.get("Path")) == _norm_path(tool_path)
+        and tool.get("Arguments") == MERGE_ARGS
+        for tool in merge_tools
+    )
 
-    status["merge_configured"] = (
+    selected_directly = (
         isinstance(merge_tool, dict)
         and merge_tool.get("Type") == "Custom"
         and _norm_path(merge_tool.get("ApplicationPath")) == _norm_path(tool_path)
         and merge_tool.get("Arguments") == MERGE_ARGS
     )
+    status["merge_configured"] = listed and (selected_directly or dispatcher_selection(settings))
     status["diff_configured"] = (
         isinstance(diff_tool, dict)
         and diff_tool.get("Type") == "Custom"

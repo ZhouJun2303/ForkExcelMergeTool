@@ -15,6 +15,7 @@ from app_settings import (
     save_startup_feature,
 )
 from backup_util import load_saved_backup_root, save_backup_root
+from companion_tools import find_external_merge_tools, launch_external_or_repo
 from excel_format import merge_diff_extension_text
 from fork_integration import (
     install_fork_integration,
@@ -126,6 +127,15 @@ class MainWindow:
         headline.pack(fill=tk.X)
         ttk.Label(headline, text="ExcelMergeFork 设置中心", style="Title.TLabel").pack(side=tk.LEFT)
         make_badge(headline, "v%s" % APP_VERSION, "primary").pack(side=tk.LEFT, padx=(10, 0))
+        self.btn_external_merge_tools = make_icon_button(
+            headline,
+            self.root,
+            "打开 ExternalMergeTools",
+            "open",
+            command=self._open_external_merge_tools,
+            style="Secondary.TButton",
+        )
+        self.btn_external_merge_tools.pack(side=tk.RIGHT)
         ttk.Label(
             title_text,
             text="管理默认模式、备份目录、Fork/Git 注入和程序更新。",
@@ -638,6 +648,13 @@ class MainWindow:
         self._set_integration_busy(False)
         gui_log("%s: %s" % (error_title, err), self.status_var, is_error=True)
         messagebox.showerror(error_title, str(err))
+
+    def _open_external_merge_tools(self):
+        result = launch_external_or_repo()
+        target = result.get("path") or result.get("url")
+        gui_log("已打开：%s" % target, self.status_var)
+        if not result.get("launched"):
+            messagebox.showinfo("获取 ExternalMergeTools", "未检测到 ExternalMergeTools，已打开对应 GitHub 仓库。")
 
     def activate(self):
         self.root.lift()

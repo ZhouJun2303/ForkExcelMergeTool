@@ -2,6 +2,8 @@
 
 Excel 三向合并与二向对比工具，兼容 **Fork** 客户端的 Merge Tool 与 Diff Tool。支持多 Sheet，合并后自动备份，冲突可在图形界面里逐项选「本地」或「线上」。
 
+设置中心可与 [ExternalMergeTools](https://github.com/ZhouJun2303/ExternalMergeTools) 双向联动。检测到对方程序时可直接拉起；未检测到时会打开对应仓库。两者同时配置 Fork 时，ExternalMergeTools 保持为按文件类型分发器，Unity YAML 文件使用 UnityYAMLMerge，Excel 文件转交本工具。
+
 ---
 
 ## 一、功能概览
