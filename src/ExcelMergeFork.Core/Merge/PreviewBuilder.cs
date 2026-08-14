@@ -26,7 +26,7 @@ public static class PreviewBuilder
                 {
                     if (key.Length > 0 && !baseKeys.Contains(key))
                     {
-                        items.Add(Make(sheet, key, "将新增行", PreviewTag.New, dataB, dataO));
+                        items.Add(Make(session, sheet, key, "将新增行", PreviewTag.New));
                         summary.New++;
                     }
                 }
@@ -44,7 +44,7 @@ public static class PreviewBuilder
                 {
                     if (key.Length > 0 && !otherKeys.Contains(key))
                     {
-                        items.Add(Make(sheet, key, "将删除行", PreviewTag.Delete, dataB, dataO));
+                        items.Add(Make(session, sheet, key, "将删除行", PreviewTag.Delete));
                         summary.Delete++;
                     }
                 }
@@ -64,16 +64,7 @@ public static class PreviewBuilder
                 {
                     if (!headerB.Contains(KeyNormalizer.HeaderForCompare(header)))
                     {
-                        items.Add(new PreviewItem
-                        {
-                            Sheet = sheet,
-                            Key = header,
-                            Action = "将新增列",
-                            Tag = PreviewTag.New,
-                            LocalValues = [],
-                            RemoteValues = [],
-                            BaseValues = [],
-                        });
+                        items.Add(Make(session, sheet, header, "将新增列", PreviewTag.New, column: true));
                         summary.New++;
                     }
                 }
@@ -95,13 +86,7 @@ public static class PreviewBuilder
                     var norm = KeyNormalizer.HeaderForCompare(header);
                     if (seen.Add(norm) && !headerO.Contains(norm))
                     {
-                        items.Add(new PreviewItem
-                        {
-                            Sheet = sheet,
-                            Key = header,
-                            Action = "将删除列",
-                            Tag = PreviewTag.Delete,
-                        });
+                        items.Add(Make(session, sheet, header, "将删除列", PreviewTag.Delete, column: true));
                         summary.Delete++;
                     }
                 }
@@ -163,24 +148,24 @@ public static class PreviewBuilder
             switch (conflict.Type)
             {
                 case ConflictType.AddLocal:
-                    items.Add(Values(conflict, $"{conflict.Key} (仅本地新增)", "信息：本地新增", PreviewTag.New));
+                    items.Add(Make(session, conflict.Sheet, conflict.Key, "信息：本地新增", PreviewTag.New, displayKey: $"{conflict.Key} (仅本地新增)"));
                     summary.Info++;
                     break;
                 case ConflictType.AddRemote:
-                    items.Add(Values(conflict, $"{conflict.Key} (仅线上新增)", "信息：线上新增", PreviewTag.New));
+                    items.Add(Make(session, conflict.Sheet, conflict.Key, "信息：线上新增", PreviewTag.New, displayKey: $"{conflict.Key} (仅线上新增)"));
                     summary.Info++;
                     break;
                 case ConflictType.AddConflict:
-                    AddChoice(conflict, items, conflictEntries, summary, $"{conflict.Key} (新增冲突)", "将保留本地", PreviewTag.Conflict, "本地");
+                    AddChoice(session, conflict, items, conflictEntries, summary, $"{conflict.Key} (新增冲突)", "将保留本地", PreviewTag.Conflict, "本地");
                     break;
                 case ConflictType.DeleteConflictLocal:
-                    AddChoice(conflict, items, conflictEntries, summary, $"{conflict.Key} (删除冲突：本地删)", "将保留线上（本地已删）", PreviewTag.DeleteConflict, "线上");
+                    AddChoice(session, conflict, items, conflictEntries, summary, $"{conflict.Key} (删除冲突：本地删)", "将保留线上（本地已删）", PreviewTag.DeleteConflict, "线上");
                     break;
                 case ConflictType.DeleteConflictRemote:
-                    AddChoice(conflict, items, conflictEntries, summary, $"{conflict.Key} (删除冲突：线上删)", "将保留本地（线上已删）", PreviewTag.DeleteConflict, "本地");
+                    AddChoice(session, conflict, items, conflictEntries, summary, $"{conflict.Key} (删除冲突：线上删)", "将保留本地（线上已删）", PreviewTag.DeleteConflict, "本地");
                     break;
                 case ConflictType.ModifyConflict:
-                    AddChoice(conflict, items, conflictEntries, summary, $"{conflict.Key} (修改冲突)", "将保留本地", PreviewTag.Conflict, "本地");
+                    AddChoice(session, conflict, items, conflictEntries, summary, $"{conflict.Key} (修改冲突)", "将保留本地", PreviewTag.Conflict, "本地");
                     break;
             }
         }
@@ -197,6 +182,7 @@ public static class PreviewBuilder
             }
 
             AddChoice(
+                session,
                 conflict,
                 items,
                 conflictEntries,
@@ -226,13 +212,7 @@ public static class PreviewBuilder
                 continue;
             }
 
-            items.Add(new PreviewItem
-            {
-                Sheet = action.Sheet,
-                Key = action.Key,
-                Action = label,
-                Tag = tag,
-            });
+            items.Add(Make(session, action.Sheet, action.Key, label, tag));
             if (tag == PreviewTag.Delete)
             {
                 summary.Delete++;
@@ -245,6 +225,7 @@ public static class PreviewBuilder
     }
 
     private static void AddChoice(
+        MergeSession session,
         ConflictItem conflict,
         List<PreviewItem> items,
         List<MergeChoice> conflictEntries,
@@ -262,52 +243,73 @@ public static class PreviewBuilder
             Choice = defaultChoice == "线上" ? "remote" : "local",
             Kind = conflict.Kind,
         });
-        items.Add(Values(conflict, key, action, tag, idx));
+        items.Add(Make(
+            session,
+            conflict.Sheet,
+            conflict.Key,
+            action,
+            tag,
+            column: conflict.Kind == ConflictKind.Column,
+            displayKey: key,
+            conflictIndex: idx));
         summary.Conflict++;
     }
 
     private static PreviewItem Make(
+        MergeSession session,
         string sheet,
         string key,
         string action,
         PreviewTag tag,
-        SheetSnapshot baseline,
-        SheetSnapshot other)
+        bool column = false,
+        string? displayKey = null,
+        int? conflictIndex = null)
     {
-        baseline.RowsByKey.TryGetValue(key, out var left);
-        other.RowsByKey.TryGetValue(key, out var right);
         return new PreviewItem
         {
             Sheet = sheet,
-            Key = key,
+            Key = displayKey ?? key,
             Action = action,
             Tag = tag,
-            BaseValues = ToTexts(left),
-            LocalValues = ToTexts(left),
-            RemoteValues = ToTexts(right),
+            ConflictIndex = conflictIndex,
+            LocalValues = SideTexts(session.Local, sheet, key, column),
+            RemoteValues = SideTexts(session.Remote, sheet, key, column),
+            BaseValues = SideTexts(session.Base, sheet, key, column),
         };
     }
 
-    private static PreviewItem Values(
-        ConflictItem conflict,
-        string key,
-        string action,
-        PreviewTag tag,
-        int? index = null)
+    public static IReadOnlyList<string> SideTexts(WorkbookSession workbook, string sheet, string key, bool column)
     {
-        return new PreviewItem
+        if (!workbook.Sheets.TryGetValue(sheet, out var snap))
         {
-            Sheet = conflict.Sheet,
-            Key = key,
-            Action = action,
-            Tag = tag,
-            ConflictIndex = index,
-            LocalValues = conflict.LocalCol ?? ToTexts(conflict.LocalRow),
-            RemoteValues = conflict.RemoteCol ?? ToTexts(conflict.RemoteRow),
-            BaseValues = conflict.BaseCol ?? ToTexts(conflict.BaseRow),
-        };
+            return [];
+        }
+
+        if (column)
+        {
+            var idx = snap.Headers.FindIndex(h =>
+                KeyNormalizer.HeaderForCompare(h) == KeyNormalizer.HeaderForCompare(key));
+            return idx < 0 ? [] : FormatPairs(snap.Headers, snap.ColumnValues(idx + 1).Cast<object?>().ToList());
+        }
+
+        if (!snap.RowsByKey.TryGetValue(key, out var row) &&
+            !snap.RowsByKey.TryGetValue(KeyNormalizer.Normalize(key), out row))
+        {
+            return [];
+        }
+
+        return FormatPairs(snap.Headers, row);
     }
 
-    private static IReadOnlyList<string> ToTexts(IReadOnlyList<object?>? row) =>
-        row?.Select(CellText.From).ToList() ?? [];
+    private static IReadOnlyList<string> FormatPairs(IReadOnlyList<string> headers, IReadOnlyList<object?> cells)
+    {
+        var lines = new List<string>(cells.Count);
+        for (var i = 0; i < cells.Count; i++)
+        {
+            var header = i < headers.Count && headers[i].Length > 0 ? headers[i] : "列" + (i + 1);
+            lines.Add(header + ": " + CellText.From(cells[i]));
+        }
+
+        return lines;
+    }
 }

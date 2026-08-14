@@ -314,6 +314,12 @@ public sealed partial class PreviewRow : ObservableObject
     public IReadOnlyList<string> LocalValues { get; init; } = [];
     public IReadOnlyList<string> RemoteValues { get; init; } = [];
     public IReadOnlyList<string> BaseValues { get; init; } = [];
+    public IReadOnlyList<string> LocalDisplay => Display(LocalValues);
+    public IReadOnlyList<string> RemoteDisplay => Display(RemoteValues);
+    public IReadOnlyList<string> BaseDisplay => Display(BaseValues);
+
+    private static IReadOnlyList<string> Display(IReadOnlyList<string> values) =>
+        values.Count > 0 ? values : ["（此侧没有该行）"];
 
     public static PreviewRow From(PreviewItem item, IReadOnlyList<MergeChoice> conflicts)
     {

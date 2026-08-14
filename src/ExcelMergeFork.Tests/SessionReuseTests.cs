@@ -23,7 +23,22 @@ public class SessionReuseTests
         var preview = PreviewBuilder.Build(session, MergeOptions.ForMode("A"));
         var added = preview.Items.Single(i => i.Key == "A-2");
         Assert.Equal("将新增行", added.Action);
-        var remoteRow = session.Remote.Snapshot("Data").RowsByKey["A-2"];
-        Assert.Equal(remoteRow.Select(CellText.From), added.RemoteValues);
+        Assert.Empty(added.LocalValues);
+        Assert.Empty(added.BaseValues);
+        Assert.Contains(added.RemoteValues, line => line.Contains("a2"));
+        Assert.Contains(added.RemoteValues, line => line.StartsWith("Key:", StringComparison.Ordinal) || line.Contains("A-2"));
+    }
+
+    [Fact]
+    public void SideTexts_MissingRow_IsEmpty_PresentRow_HasHeaders()
+    {
+        var local = TestRepo.Fixture("mode_a_local.xlsx");
+        var remote = TestRepo.Fixture("mode_a_remote.xlsx");
+        using var session = new MergeSession(local, local, remote);
+        Assert.Empty(PreviewBuilder.SideTexts(session.Local, "Data", "A-2", column: false));
+        Assert.Empty(PreviewBuilder.SideTexts(session.Base, "Data", "A-2", column: false));
+        var remoteLines = PreviewBuilder.SideTexts(session.Remote, "Data", "A-2", column: false);
+        Assert.NotEmpty(remoteLines);
+        Assert.Contains(remoteLines, line => line.Contains("a2"));
     }
 }

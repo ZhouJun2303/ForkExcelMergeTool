@@ -104,13 +104,19 @@
                 <ColumnDefinition/>
             </Grid.ColumnDefinitions>
             <GroupBox Header="BASE" Grid.Column="0" Margin="0,0,6,0">
-                <ItemsControl ItemsSource="{Binding SelectedItem.BaseValues}"/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding SelectedItem.BaseDisplay}" Margin="8"/>
+                </ScrollViewer>
             </GroupBox>
             <GroupBox Header="LOCAL" Grid.Column="1" Margin="3,0">
-                <ItemsControl ItemsSource="{Binding SelectedItem.LocalValues}"/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding SelectedItem.LocalDisplay}" Margin="8"/>
+                </ScrollViewer>
             </GroupBox>
             <GroupBox Header="REMOTE" Grid.Column="2" Margin="6,0,0,0">
-                <ItemsControl ItemsSource="{Binding SelectedItem.RemoteValues}"/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding SelectedItem.RemoteDisplay}" Margin="8"/>
+                </ScrollViewer>
             </GroupBox>
         </Grid>
 
