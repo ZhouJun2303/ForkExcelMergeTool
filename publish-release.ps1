@@ -27,8 +27,12 @@ if (-not $gh) {
     Fail "GitHub CLI not found. Run: winget install --id GitHub.cli -e   then   gh auth login"
 }
 
+$oldEap = $ErrorActionPreference
+$ErrorActionPreference = "SilentlyContinue"
 & gh auth status 2>$null
-if ($LASTEXITCODE -ne 0) {
+$authCode = [int]$LASTEXITCODE
+$ErrorActionPreference = $oldEap
+if ($authCode -ne 0) {
     Fail "GitHub CLI is not logged in. Run: gh auth login"
 }
 
@@ -87,14 +91,27 @@ function Invoke-Gh([string[]] $GhArgs) {
     $ErrorActionPreference = "Continue"
     try {
         & gh @GhArgs
-        return $LASTEXITCODE
+        return [int]$LASTEXITCODE
     } finally {
         $ErrorActionPreference = $old
     }
 }
 
-$existsCode = Invoke-Gh @("release", "view", $tag)
-if ($existsCode -eq 0) {
+function Test-GhRelease([string] $ReleaseTag) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    try {
+        $null = & gh release view $ReleaseTag --json tagName 2>$null
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $old
+    }
+}
+
+$notesFile = Join-Path $env:TEMP "ExcelMergeFork-release-notes.md"
+Set-Content -Path $notesFile -Value $notes -Encoding utf8
+
+if (Test-GhRelease $tag) {
     Write-Host "Release $tag already exists. Uploading assets with --clobber..."
     $uploadCode = Invoke-Gh @("release", "upload", $tag, $exe, $sha, $zip, "--clobber")
     if ($uploadCode -ne 0) { Fail "gh release upload failed" }
@@ -103,14 +120,16 @@ if ($existsCode -eq 0) {
     $createArgs = @(
         "release", "create", $tag,
         "--title", "ExcelMergeFork $tag",
-        "--notes", $notes,
+        "--notes-file", $notesFile,
         "--target", $target,
         "--latest",
         $exe, $sha, $zip
     )
     if ($Prerelease) { $createArgs += "--prerelease" }
     $createCode = Invoke-Gh $createArgs
-    if ($createCode -ne 0) { Fail "gh release create failed" }
+    if ($createCode -ne 0 -and -not (Test-GhRelease $tag)) {
+        Fail "gh release create failed"
+    }
 }
 
 Write-Host ""
