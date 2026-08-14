@@ -20,7 +20,9 @@ public partial class SettingsWindow
     {
         InitializeComponent();
         Title = $"ExcelMergeFork 设置中心 v{AppVersion.Display}";
-        Loaded += (_, _) => ShowPage("general");
+        // ListBoxItem.IsSelected in XAML fires SelectionChanged during InitializeComponent,
+        // before PageHost exists. Load the first page only after the tree is ready.
+        ShowPage("general");
     }
 
     private void OnNavChanged(object sender, SelectionChangedEventArgs e)
@@ -33,6 +35,11 @@ public partial class SettingsWindow
 
     private void ShowPage(string tag)
     {
+        if (PageHost is null)
+        {
+            return;
+        }
+
         _settings = AppSettingsStore.Load();
         PageHost.Children.Clear();
         switch (tag)

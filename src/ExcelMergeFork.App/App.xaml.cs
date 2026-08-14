@@ -208,6 +208,29 @@ public partial class App : System.Windows.Application
         return dialog.Choice;
     }
 
+    public static void OpenSettings()
+    {
+        try
+        {
+            foreach (Window existing in Current.Windows)
+            {
+                if (existing is SettingsWindow)
+                {
+                    existing.Activate();
+                    existing.Focus();
+                    return;
+                }
+            }
+
+            ((App)Current).ShowAndTrack(new SettingsWindow());
+        }
+        catch (Exception ex)
+        {
+            AppLog.Exception("打开设置中心失败", ex);
+            MessageBox.Show(ex.Message, "ExcelMergeFork");
+        }
+    }
+
     public static void OpenTracked(Window window) => ((App)Current).ShowAndTrack(window);
 
     private void ShowAndTrack(Window window, int exitCode = 0) =>

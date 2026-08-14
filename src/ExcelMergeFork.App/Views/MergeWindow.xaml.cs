@@ -22,7 +22,7 @@ public partial class MergeWindow
         Closed += (_, _) => _vm.DisposeSession();
     }
 
-    private void OpenSettings(object sender, RoutedEventArgs e) => App.OpenTracked(new SettingsWindow());
+    private void OpenSettings(object sender, RoutedEventArgs e) => App.OpenSettings();
 
     private void OnCancel(object sender, RoutedEventArgs e) => Close();
 

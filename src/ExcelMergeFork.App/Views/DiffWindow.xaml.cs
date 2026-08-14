@@ -15,7 +15,7 @@ public partial class DiffWindow
         Loaded += async (_, _) => await _vm.LoadAsync();
     }
 
-    private void OpenSettings(object sender, RoutedEventArgs e) => App.OpenTracked(new SettingsWindow());
+    private void OpenSettings(object sender, RoutedEventArgs e) => App.OpenSettings();
 
     private void OnExport(object sender, RoutedEventArgs e) => _vm.ExportCommand.Execute(false);
 
