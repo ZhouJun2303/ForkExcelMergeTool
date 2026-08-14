@@ -82,11 +82,22 @@ try {
 if (-not $target) { Fail "empty git HEAD" }
 Write-Host "Target commit: $target"
 
-$existing = & gh release view $tag 2>$null
-if ($LASTEXITCODE -eq 0) {
+function Invoke-Gh([string[]] $GhArgs) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & gh @GhArgs
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $old
+    }
+}
+
+$existsCode = Invoke-Gh @("release", "view", $tag)
+if ($existsCode -eq 0) {
     Write-Host "Release $tag already exists. Uploading assets with --clobber..."
-    & gh release upload $tag $exe $sha $zip --clobber
-    if ($LASTEXITCODE -ne 0) { Fail "gh release upload failed" }
+    $uploadCode = Invoke-Gh @("release", "upload", $tag, $exe, $sha, $zip, "--clobber")
+    if ($uploadCode -ne 0) { Fail "gh release upload failed" }
 } else {
     Write-Host "Creating release $tag..."
     $createArgs = @(
@@ -98,8 +109,8 @@ if ($LASTEXITCODE -eq 0) {
         $exe, $sha, $zip
     )
     if ($Prerelease) { $createArgs += "--prerelease" }
-    & gh @createArgs
-    if ($LASTEXITCODE -ne 0) { Fail "gh release create failed" }
+    $createCode = Invoke-Gh $createArgs
+    if ($createCode -ne 0) { Fail "gh release create failed" }
 }
 
 Write-Host ""
