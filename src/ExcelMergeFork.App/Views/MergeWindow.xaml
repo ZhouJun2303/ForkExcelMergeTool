@@ -5,6 +5,7 @@
                  Title="Excel 三向合并"
                  Width="1280" Height="820"
                  MinWidth="980" MinHeight="640"
+                 Icon="pack://application:,,,/Assets/ExcelMergeFork.ico"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica">
     <Grid>
@@ -16,7 +17,11 @@
             <RowDefinition Height="220"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <ui:TitleBar Title="Excel 三向合并" Grid.Row="0"/>
+        <ui:TitleBar Title="Excel 三向合并" Grid.Row="0">
+            <ui:TitleBar.Icon>
+                <ui:ImageIcon Source="pack://application:,,,/Assets/app_32.png"/>
+            </ui:TitleBar.Icon>
+        </ui:TitleBar>
 
         <DockPanel Grid.Row="1" Margin="20,8,20,0">
             <Button DockPanel.Dock="Right" Content="设置中心" Click="OpenSettings" Padding="12,6"/>

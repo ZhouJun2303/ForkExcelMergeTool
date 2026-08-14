@@ -23,4 +23,9 @@
     <ProjectReference Include="..\ExcelMergeFork.Core\ExcelMergeFork.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Resource Include="..\..\Assets\ExcelMergeFork.ico" Link="Assets\ExcelMergeFork.ico" />
+    <Resource Include="..\..\Assets\icons\app_32.png" Link="Assets\app_32.png" />
+  </ItemGroup>
+
 </Project>

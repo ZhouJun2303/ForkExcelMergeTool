@@ -63,12 +63,13 @@ public class GitIntegrationTests
         var end = text.IndexOf("private static string? ResolveFeature", start, StringComparison.Ordinal);
         Assert.True(end > start, "cannot isolate StartGitDriver");
         var method = text[start..end];
-        const string explicitMode = "Application.Current.ShutdownMode = ShutdownMode.OnExplicitShutdown";
-        var modeAt = method.IndexOf(explicitMode, StringComparison.Ordinal);
-        var showAt = method.IndexOf("window.Show()", StringComparison.Ordinal);
-        Assert.True(modeAt >= 0, "StartGitDriver must set Application.Current.ShutdownMode = OnExplicitShutdown");
-        Assert.True(showAt > modeAt, "Application.Current.ShutdownMode must be set before Show so Closed can Shutdown(1)");
-        Assert.Contains("window.Closed +=", method, StringComparison.Ordinal);
-        Assert.Contains("Application.Current.Shutdown(GitMergeDriver.WindowCloseExitCode(window.WriteBackSucceeded))", method, StringComparison.Ordinal);
+        Assert.Contains("ShowAndTrack(window", method, StringComparison.Ordinal);
+        Assert.Contains("WindowCloseExitCode(window.WriteBackSucceeded)", method, StringComparison.Ordinal);
+
+        var startup = text[text.IndexOf("private void OnStartup", StringComparison.Ordinal)..];
+        var explicitAt = startup.IndexOf("ShutdownMode = ShutdownMode.OnExplicitShutdown", StringComparison.Ordinal);
+        var resolveAt = startup.IndexOf("ResolveFeature(", StringComparison.Ordinal);
+        Assert.True(explicitAt >= 0, "OnStartup must set OnExplicitShutdown");
+        Assert.True(resolveAt > explicitAt, "OnExplicitShutdown must be set before any choice dialog");
     }
 }

@@ -1,11 +1,12 @@
 using System.IO;
 using System.Windows;
+using ExcelMergeFork.Core;
 using ExcelMergeFork.Core.Excel;
 using ExcelMergeFork.Core.Settings;
 
 namespace ExcelMergeFork.App.Views;
 
-public partial class StartupChoiceWindow
+public partial class StartupChoiceWindow : Window
 {
     public string? Choice { get; private set; }
 
@@ -39,22 +40,39 @@ public partial class StartupChoiceWindow
         }
     }
 
-    private void OnBackup(object sender, RoutedEventArgs e)
-    {
-        Choice = StartupFeature.BackupOnly;
-        DialogResult = true;
-    }
+    private void OnBackup(object sender, RoutedEventArgs e) => Accept(StartupFeature.BackupOnly);
 
-    private void OnMerge(object sender, RoutedEventArgs e)
-    {
-        Choice = StartupFeature.MergeDiff;
-        DialogResult = true;
-    }
+    private void OnMerge(object sender, RoutedEventArgs e) => Accept(StartupFeature.MergeDiff);
 
     private void OnCancel(object sender, RoutedEventArgs e)
     {
-        DialogResult = false;
+        AppLog.Info("启动选择：取消");
+        Choice = null;
+        TrySetDialogResult(false);
         Close();
+    }
+
+    public void Accept(string choice)
+    {
+        Choice = choice;
+        AppLog.Info("启动选择：" + choice);
+        TrySetDialogResult(true);
+        if (IsVisible)
+        {
+            Close();
+        }
+    }
+
+    private void TrySetDialogResult(bool value)
+    {
+        try
+        {
+            DialogResult = value;
+        }
+        catch (InvalidOperationException)
+        {
+            // Shown with Show() instead of ShowDialog(); Close() is enough.
+        }
     }
 
     private static string FormatSize(string path)

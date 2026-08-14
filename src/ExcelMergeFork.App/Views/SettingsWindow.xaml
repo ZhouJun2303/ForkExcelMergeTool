@@ -5,6 +5,7 @@
                  Title="ExcelMergeFork 设置中心"
                  Width="980" Height="720"
                  MinWidth="820" MinHeight="600"
+                 Icon="pack://application:,,,/Assets/ExcelMergeFork.ico"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica">
     <Grid>
@@ -12,7 +13,11 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-        <ui:TitleBar Title="ExcelMergeFork 设置中心" Grid.Row="0"/>
+        <ui:TitleBar Title="ExcelMergeFork 设置中心" Grid.Row="0">
+            <ui:TitleBar.Icon>
+                <ui:ImageIcon Source="pack://application:,,,/Assets/app_32.png"/>
+            </ui:TitleBar.Icon>
+        </ui:TitleBar>
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="220"/>

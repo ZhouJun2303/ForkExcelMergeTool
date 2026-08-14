@@ -5,6 +5,7 @@
                  Title="快速备份"
                  Width="820" Height="520"
                  WindowStartupLocation="CenterScreen"
+                 Icon="pack://application:,,,/Assets/ExcelMergeFork.ico"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica">
     <Grid>
@@ -13,7 +14,11 @@
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <ui:TitleBar Title="快速备份模式"/>
+        <ui:TitleBar Title="快速备份模式">
+            <ui:TitleBar.Icon>
+                <ui:ImageIcon Source="pack://application:,,,/Assets/app_32.png"/>
+            </ui:TitleBar.Icon>
+        </ui:TitleBar>
         <StackPanel Grid.Row="1" Margin="24">
             <TextBlock x:Name="Headline" FontSize="22" FontWeight="SemiBold"/>
             <TextBlock x:Name="Detail" TextWrapping="Wrap" Margin="0,8,0,16" Opacity="0.75"/>

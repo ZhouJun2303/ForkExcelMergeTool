@@ -1,5 +1,6 @@
-using System.Windows;
 using System.Linq;
+using System.Windows;
+using System.Windows.Threading;
 using ExcelMergeFork.App.Views;
 using ExcelMergeFork.Core;
 using ExcelMergeFork.Core.Backup;
@@ -13,18 +14,25 @@ namespace ExcelMergeFork.App;
 
 public partial class App : System.Windows.Application
 {
+    private int _pendingExitCode;
+
     private void OnStartup(object sender, StartupEventArgs e)
     {
+        // Choice dialogs close before the work window is shown. OnLastWindowClose
+        // would kill the process in that gap, so every launch uses explicit shutdown.
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
         var settings = AppSettingsStore.Load();
         ApplicationThemeManager.Apply(settings.DarkTheme ? ApplicationTheme.Dark : ApplicationTheme.Light);
 
         var request = LaunchArgs.Parse(e.Args);
+        AppLog.Info("启动 mode=" + request.Mode + " files=" + string.Join(" | ", request.Files));
         try
         {
             switch (request.Mode)
             {
                 case LaunchMode.Settings:
-                    new SettingsWindow().Show();
+                    ShowAndTrack(new SettingsWindow());
                     break;
                 case LaunchMode.InstallFork:
                     ShowStatus("Fork 注入", ForkIntegration.Install(request.Files.FirstOrDefault()).Detail);
@@ -53,7 +61,7 @@ public partial class App : System.Windows.Application
                     break;
                 default:
                     MessageBox.Show("参数无法识别。请从 Fork 打开，或直接双击进入设置中心。", "ExcelMergeFork");
-                    new SettingsWindow().Show();
+                    ShowAndTrack(new SettingsWindow());
                     break;
             }
         }
@@ -88,9 +96,11 @@ public partial class App : System.Windows.Application
 
         if (feature == StartupFeature.BackupOnly)
         {
-            ShowBackup(BackupService.CreateQuickBackup(
-                [("local", request.Local!), ("base", request.Base!), ("remote", request.Remote!), ("merged", request.Merged!)],
-                request.Merged!));
+            ShowAndTrack(new BackupResultWindow(
+                BackupService.CreateQuickBackup(
+                    [("local", request.Local!), ("base", request.Base!), ("remote", request.Remote!), ("merged", request.Merged!)],
+                    request.Merged!),
+                null));
             return;
         }
 
@@ -103,7 +113,8 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        new MergeWindow(request.Local!, request.Base!, request.Remote!, request.Merged!).Show();
+        AppLog.Info("打开合并窗口");
+        ShowAndTrack(new MergeWindow(request.Local!, request.Base!, request.Remote!, request.Merged!));
     }
 
     private void StartCompare(LaunchRequest request)
@@ -127,11 +138,14 @@ public partial class App : System.Windows.Application
 
         if (feature == StartupFeature.BackupOnly)
         {
-            ShowBackup(BackupService.CreateQuickBackup([("a", request.Remote!), ("b", request.Local!)], request.Local!));
+            ShowAndTrack(new BackupResultWindow(
+                BackupService.CreateQuickBackup([("a", request.Remote!), ("b", request.Local!)], request.Local!),
+                null));
             return;
         }
 
-        new DiffWindow(request.Local!, request.Remote!).Show();
+        AppLog.Info("打开对比窗口");
+        ShowAndTrack(new DiffWindow(request.Local!, request.Remote!));
     }
 
     private void StartGitDriver(LaunchRequest request)
@@ -158,20 +172,19 @@ public partial class App : System.Windows.Application
 
         if (feature == StartupFeature.BackupOnly)
         {
-            ShowBackup(BackupService.CreateQuickBackup(
-                [("base", prepared.BasePath), ("current", prepared.CurrentPath), ("other", prepared.OtherPath)],
-                context));
-            Shutdown(1);
+            ShowAndTrack(
+                new BackupResultWindow(
+                    BackupService.CreateQuickBackup(
+                        [("base", prepared.BasePath), ("current", prepared.CurrentPath), ("other", prepared.OtherPath)],
+                        context),
+                    null),
+                GitMergeDriver.WindowCloseExitCode(false));
             return;
         }
 
-        // OnLastWindowClose calls Shutdown(0) before Window.Closed, which would
-        // swallow cancel/X (exit 1). Git must wait for our explicit Shutdown.
-        System.Windows.Application.Current.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        AppLog.Info("打开 Git driver 合并窗口");
         var window = new MergeWindow(prepared.LocalCopy, prepared.BaseCopy, prepared.RemoteCopy, prepared.MergedCopy, prepared);
-        window.Closed += (_, _) =>
-            System.Windows.Application.Current.Shutdown(GitMergeDriver.WindowCloseExitCode(window.WriteBackSucceeded));
-        window.Show();
+        ShowAndTrack(window, () => GitMergeDriver.WindowCloseExitCode(window.WriteBackSucceeded));
     }
 
     private static string? ResolveFeature(string scene, IReadOnlyList<(string Role, string Path)> files, IEnumerable<string> checkPaths)
@@ -182,13 +195,39 @@ public partial class App : System.Windows.Application
             return feature;
         }
 
+        AppLog.Info("本次启动需要选择模式 scene=" + scene);
         var dialog = new StartupChoiceWindow(scene, files, LaunchArgs.UnsupportedMergeDiff(checkPaths));
-        return dialog.ShowDialog() == true ? dialog.Choice : null;
+        dialog.ShowDialog();
+        if (string.IsNullOrEmpty(dialog.Choice))
+        {
+            AppLog.Info("用户取消本次启动模式选择 scene=" + scene);
+            return null;
+        }
+
+        AppLog.Info("本次启动模式选择 scene=" + scene + " choice=" + dialog.Choice);
+        return dialog.Choice;
     }
 
-    private static void ShowBackup(BackupInfo info)
+    public static void OpenTracked(Window window) => ((App)Current).ShowAndTrack(window);
+
+    private void ShowAndTrack(Window window, int exitCode = 0) =>
+        ShowAndTrack(window, () => exitCode);
+
+    private void ShowAndTrack(Window window, Func<int> exitCode)
     {
-        new BackupResultWindow(info, null).Show();
+        window.Closed += (_, _) =>
+        {
+            _pendingExitCode = exitCode();
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (!Windows.OfType<Window>().Any(w => w.IsVisible))
+                {
+                    Shutdown(_pendingExitCode);
+                }
+            }, DispatcherPriority.Background);
+        };
+        window.Show();
+        window.Activate();
     }
 
     private static void ShowStatus(string title, string detail)
