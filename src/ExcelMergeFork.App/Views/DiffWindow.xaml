@@ -1,0 +1,81 @@
+<ui:FluentWindow x:Class="ExcelMergeFork.App.Views.DiffWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="Excel 二向对比"
+                 Width="1200" Height="760"
+                 MinWidth="900" MinHeight="560"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="200"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <ui:TitleBar Title="Excel 二向对比"/>
+        <DockPanel Grid.Row="1" Margin="20,8,20,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Content="互换基准" Command="{Binding SwapCommand}" Margin="0,0,8,0" Padding="12,6"/>
+                <Button Content="设置中心" Click="OpenSettings" Padding="12,6"/>
+            </StackPanel>
+            <StackPanel>
+                <TextBlock Text="{Binding Title}" FontSize="22" FontWeight="SemiBold"/>
+                <TextBlock Text="{Binding PathRemote}" Opacity="0.7" Margin="0,4,0,0"/>
+                <TextBlock Text="{Binding PathLocal}" Opacity="0.7"/>
+            </StackPanel>
+        </DockPanel>
+        <WrapPanel Grid.Row="2" Margin="20,12,20,8">
+            <CheckBox Content="新增行" IsChecked="{Binding ShowAdded}" Margin="0,0,12,0"/>
+            <CheckBox Content="删除行" IsChecked="{Binding ShowDeleted}" Margin="0,0,12,0"/>
+            <CheckBox Content="新增列" IsChecked="{Binding ShowNewCols}" Margin="0,0,12,0"/>
+            <CheckBox Content="删除列" IsChecked="{Binding ShowDelCols}" Margin="0,0,12,0"/>
+            <CheckBox Content="修改" IsChecked="{Binding ShowModified}" Margin="0,0,16,0"/>
+            <TextBox Width="260" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
+        </WrapPanel>
+        <ListView Grid.Row="3" Margin="20,0,20,8" ItemsSource="{Binding ItemsView}" SelectedItem="{Binding SelectedItem}"
+                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" BorderThickness="0">
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Margin="0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="88"/>
+                            <ColumnDefinition Width="150"/>
+                            <ColumnDefinition Width="180"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding Status}" FontWeight="SemiBold"/>
+                        <TextBlock Grid.Column="1" Text="{Binding Sheet}"/>
+                        <TextBlock Grid.Column="2" Text="{Binding Key}" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Grid.Column="3" Text="{Binding Left}" Opacity="0.75" TextTrimming="CharacterEllipsis" Margin="8,0"/>
+                        <TextBlock Grid.Column="4" Text="{Binding Right}" Opacity="0.75" TextTrimming="CharacterEllipsis"/>
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+        <Grid Grid.Row="4" Margin="20,0,20,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition/>
+                <ColumnDefinition/>
+            </Grid.ColumnDefinitions>
+            <GroupBox Header="A" Margin="0,0,6,0">
+                <ItemsControl ItemsSource="{Binding SelectedItem.LeftValues}"/>
+            </GroupBox>
+            <GroupBox Header="B" Margin="6,0,0,0">
+                <ItemsControl ItemsSource="{Binding SelectedItem.RightValues}"/>
+            </GroupBox>
+        </Grid>
+        <DockPanel Grid.Row="5" Margin="20,0,20,16">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <CheckBox Content="导出后打开" IsChecked="{Binding AutoOpen}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <Button Content="导出对比工作簿" Click="OnExport" Padding="16,8" Margin="0,0,8,0"/>
+                <Button Content="关闭" Click="OnClose" Padding="16,8"/>
+            </StackPanel>
+            <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center"/>
+        </DockPanel>
+    </Grid>
+</ui:FluentWindow>

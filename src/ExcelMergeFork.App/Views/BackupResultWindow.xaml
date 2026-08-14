@@ -1,0 +1,32 @@
+<ui:FluentWindow x:Class="ExcelMergeFork.App.Views.BackupResultWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="快速备份"
+                 Width="820" Height="520"
+                 WindowStartupLocation="CenterScreen"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <ui:TitleBar Title="快速备份模式"/>
+        <StackPanel Grid.Row="1" Margin="24">
+            <TextBlock x:Name="Headline" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock x:Name="Detail" TextWrapping="Wrap" Margin="0,8,0,16" Opacity="0.75"/>
+            <DataGrid x:Name="FilesGrid" AutoGenerateColumns="False" IsReadOnly="True" Height="240">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="类型" Binding="{Binding Label}" Width="120"/>
+                    <DataGridTextColumn Header="备份文件" Binding="{Binding Path}" Width="*"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </StackPanel>
+        <DockPanel Grid.Row="2" Margin="24,0,24,20">
+            <Button DockPanel.Dock="Right" Content="关闭" Click="OnClose" Padding="16,8"/>
+            <Button Content="打开目录" Click="OnOpen" Padding="16,8"/>
+        </DockPanel>
+    </Grid>
+</ui:FluentWindow>

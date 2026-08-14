@@ -1,23 +1,9 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-*.egg
-*.egg-info/
-.eggs/
-dist-eggs/
-*.manifest
-*.spec.bak
+# .NET
+src/**/bin/
+src/**/obj/
+*.user
 
-# 虚拟环境
-venv/
-.venv/
-env/
-.env/
-
-# 构建产物（exe 可本地打包生成）
+# 构建产物
 build/
 dist/
 *.exe
@@ -31,13 +17,13 @@ dist/
 .merge_excel_*.lock
 .cache/
 
-# 测试/输出数据（可本地生成）
+# 测试输出
 TestData/_output/
 TestData/MergeExcelBackup/
 TestData/*_compare.xlsx
 TestData/local_compare.xlsx
 
-# IDE / 编辑器
+# IDE
 .idea/
 .vscode/
 *.swp
@@ -49,7 +35,6 @@ TestData/local_compare.xlsx
 Thumbs.db
 desktop.ini
 
-# PyInstaller
-*.spec.bak
+# 本地配置
 merge_options.json
-Tools/lite_launcher/payload.zip
+update_state.json
