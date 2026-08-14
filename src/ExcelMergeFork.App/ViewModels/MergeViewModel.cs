@@ -45,15 +45,19 @@ public sealed partial class MergeViewModel : ObservableObject
         ResolveConflicts = _settings.ResolveConflicts;
     }
 
+    public const string AllSheetsLabel = "全部 Sheet";
+    public const string AllTypesLabel = "全部类型";
+
     public ObservableCollection<PreviewRow> Items { get; } = [];
     public ICollectionView ItemsView { get; }
-    public ObservableCollection<string> SheetFilters { get; } = ["全部 Sheet"];
+    public ObservableCollection<string> SheetFilters { get; } = [AllSheetsLabel];
+    public ObservableCollection<string> TypeFilters { get; } = [AllTypesLabel, "冲突", "删除冲突", "新增", "删除", "自动"];
 
     [ObservableProperty] private string _statusText = "正在加载预览...";
     [ObservableProperty] private string _summaryText = "";
     [ObservableProperty] private string _searchText = "";
-    [ObservableProperty] private string _sheetFilter = "全部 Sheet";
-    [ObservableProperty] private string _typeFilter = "全部类型";
+    [ObservableProperty] private string _sheetFilter = AllSheetsLabel;
+    [ObservableProperty] private string _typeFilter = AllTypesLabel;
     [ObservableProperty] private string _localCommit = "";
     [ObservableProperty] private string _remoteCommit = "";
     [ObservableProperty] private string _targetPath = "";
@@ -194,9 +198,11 @@ public sealed partial class MergeViewModel : ObservableObject
         }
 
         _preview = PreviewBuilder.Build(_session, CurrentOptions());
+        var keepSheet = SheetFilter;
+        var keepType = TypeFilter;
         Items.Clear();
         SheetFilters.Clear();
-        SheetFilters.Add("全部 Sheet");
+        SheetFilters.Add(AllSheetsLabel);
         foreach (var item in _preview.Items)
         {
             Items.Add(PreviewRow.From(item, _preview.ConflictEntries));
@@ -205,6 +211,9 @@ public sealed partial class MergeViewModel : ObservableObject
                 SheetFilters.Add(item.Sheet);
             }
         }
+
+        SheetFilter = SheetFilters.Contains(keepSheet) ? keepSheet : AllSheetsLabel;
+        TypeFilter = TypeFilters.Contains(keepType) ? keepType : AllTypesLabel;
 
         var s = _preview.Summary;
         SummaryText = $"基准={(BaseSide == "remote" ? "线上" : "本地")}；新增 {s.New}；删除 {s.Delete}；冲突 {s.Conflict}；信息 {s.Info}；合计 {Items.Count}";
@@ -255,12 +264,16 @@ public sealed partial class MergeViewModel : ObservableObject
             return false;
         }
 
-        if (SheetFilter != "全部 Sheet" && row.Sheet != SheetFilter)
+        if (!string.IsNullOrWhiteSpace(SheetFilter) &&
+            SheetFilter != AllSheetsLabel &&
+            row.Sheet != SheetFilter)
         {
             return false;
         }
 
-        if (TypeFilter != "全部类型" && row.TypeLabel != TypeFilter)
+        if (!string.IsNullOrWhiteSpace(TypeFilter) &&
+            TypeFilter != AllTypesLabel &&
+            row.TypeLabel != TypeFilter)
         {
             return false;
         }

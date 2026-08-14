@@ -50,16 +50,12 @@
                     <CheckBox Content="处理冲突" IsChecked="{Binding ResolveConflicts}" Margin="12,0,0,0"/>
                 </WrapPanel>
                 <DockPanel Margin="0,10,0,0">
-                    <ComboBox DockPanel.Dock="Right" Width="140" ItemsSource="{Binding SheetFilters}" SelectedItem="{Binding SheetFilter}"/>
+                    <ComboBox DockPanel.Dock="Right" Width="160"
+                              ItemsSource="{Binding SheetFilters}"
+                              SelectedItem="{Binding SheetFilter, Mode=TwoWay}"/>
                     <ComboBox DockPanel.Dock="Right" Width="120" Margin="0,0,8,0"
-                              SelectedValue="{Binding TypeFilter}" SelectedValuePath="Content">
-                        <ComboBoxItem Content="全部类型"/>
-                        <ComboBoxItem Content="冲突"/>
-                        <ComboBoxItem Content="删除冲突"/>
-                        <ComboBoxItem Content="新增"/>
-                        <ComboBoxItem Content="删除"/>
-                        <ComboBoxItem Content="自动"/>
-                    </ComboBox>
+                              ItemsSource="{Binding TypeFilters}"
+                              SelectedItem="{Binding TypeFilter, Mode=TwoWay}"/>
                     <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
                 </DockPanel>
                 <TextBlock Text="{Binding SummaryText}" Opacity="0.7" Margin="0,8,0,0"/>
