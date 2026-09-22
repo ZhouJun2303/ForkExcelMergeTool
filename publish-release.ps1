@@ -19,6 +19,52 @@ function Fail([string] $Message) {
     exit 1
 }
 
+function Update-AppVersion {
+    $versionFile = Join-Path $PSScriptRoot "src\ExcelMergeFork.Core\AppVersion.cs"
+    $versionText = Get-Content -Raw $versionFile
+    $majorMatch = [regex]::Match($versionText, 'public const int Major = (\d+);')
+    $minorMatch = [regex]::Match($versionText, 'public const int Minor = (\d+);')
+    $displayMatch = [regex]::Match($versionText, 'public const string Display = "([^"]+)";')
+    if (-not $majorMatch.Success -or -not $minorMatch.Success -or -not $displayMatch.Success) {
+        Fail "cannot read version from AppVersion.cs"
+    }
+
+    $major = [int]$majorMatch.Groups[1].Value
+    $minor = [int]$minorMatch.Groups[1].Value + 1
+    $display = "$major.$minor"
+    $updatedVersionText = [regex]::Replace(
+        $versionText,
+        'public const int Minor = \d+;',
+        "public const int Minor = $minor;"
+    )
+    $updatedVersionText = [regex]::Replace(
+        $updatedVersionText,
+        'public const string Display = "[^"]+";',
+        "public const string Display = `"$display`";"
+    )
+    Set-Content -Path $versionFile -Value $updatedVersionText -Encoding utf8
+
+    $projectFile = Join-Path $PSScriptRoot "src\ExcelMergeFork.App\ExcelMergeFork.App.csproj"
+    $projectText = Get-Content -Raw $projectFile
+    $updatedProjectText = [regex]::Replace($projectText, '<Version>[^<]+</Version>', "<Version>$display.0</Version>")
+    $updatedProjectText = [regex]::Replace($updatedProjectText, '<InformationalVersion>[^<]+</InformationalVersion>', "<InformationalVersion>$display</InformationalVersion>")
+    Set-Content -Path $projectFile -Value $updatedProjectText -Encoding utf8
+
+    $manifestFile = Join-Path $PSScriptRoot "src\ExcelMergeFork.App\app.manifest"
+    $manifestText = Get-Content -Raw $manifestFile
+    $updatedManifestText = [regex]::Replace(
+        $manifestText,
+        '(<assemblyIdentity version=")[^"]+(" name="ExcelMergeFork\.app")',
+        [System.Text.RegularExpressions.MatchEvaluator] {
+            param($match)
+            return "$($match.Groups[1].Value)$display.0.0$($match.Groups[2].Value)"
+        }
+    )
+    Set-Content -Path $manifestFile -Value $updatedManifestText -Encoding utf8
+
+    Write-Host "Version bumped: v$display"
+}
+
 Write-Host "========== ExcelMergeFork Release =========="
 Write-Host ""
 
@@ -36,6 +82,18 @@ if ($authCode -ne 0) {
     Fail "GitHub CLI is not logged in. Run: gh auth login"
 }
 
+$dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
+if (-not $dotnet) {
+    Fail "dotnet not found. Install .NET 8 SDK from https://dotnet.microsoft.com/download"
+}
+
+Update-AppVersion
+
+$packageArgs = @("-NoPause", "-PackageZip")
+if ($SkipTest) { $packageArgs += "-SkipTest" }
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "package.ps1") @packageArgs
+if ($LASTEXITCODE -ne 0) { Fail "package failed" }
+
 $versionFile = Join-Path $PSScriptRoot "src\ExcelMergeFork.Core\AppVersion.cs"
 $text = Get-Content -Raw $versionFile
 if ($text -notmatch 'Display = "([^"]+)"') {
@@ -45,11 +103,6 @@ $version = $Matches[1]
 $tag = "v$version"
 Write-Host "Version: $tag"
 Write-Host ""
-
-$packageArgs = @("-NoPause", "-PackageZip")
-if ($SkipTest) { $packageArgs += "-SkipTest" }
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "package.ps1") @packageArgs
-if ($LASTEXITCODE -ne 0) { Fail "package failed" }
 
 $exe = Join-Path $PSScriptRoot "ExcelMergeFork.exe"
 $sha = Join-Path $PSScriptRoot "ExcelMergeFork.exe.sha256"

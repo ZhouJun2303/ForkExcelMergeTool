@@ -105,6 +105,6 @@ dotnet test src\ExcelMergeFork.Tests\ExcelMergeFork.Tests.csproj -c Release
 package.bat
 ```
 
-`package.bat` 会测试并发布自包含 `ExcelMergeFork.exe` 到仓库根目录。`package.bat --dist --package-zip` 额外打 zip。
+`package.bat` 会测试并发布自包含 `ExcelMergeFork.exe` 到仓库根目录，不会修改版本号。`publish-release.bat` 发布前会自动递增小版本号并创建新的 GitHub Release。`package.bat --dist --package-zip` 额外打 zip。
 
 源码在 `src/`：`ExcelMergeFork.Core` 无 UI 引擎，`ExcelMergeFork.App` 为 WPF 界面，`ExcelMergeFork.Tests` 为 xUnit。夹具在 `TestData/`。
