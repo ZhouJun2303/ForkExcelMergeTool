@@ -18,8 +18,10 @@ public sealed partial class MergeViewModel : ObservableObject
     private readonly string _remote;
     private readonly string _merged;
     private readonly GitDriverRequest? _driver;
+    private readonly MergeWizardState _wizard = new();
     private MergeSession? _session;
     private MergePreview? _preview;
+    private List<PreviewRow> _allItems = [];
     private UserSettings _settings = AppSettingsStore.Load();
 
     public MergeViewModel(string local, string basePath, string remote, string merged, GitDriverRequest? driver = null)
@@ -43,26 +45,27 @@ public sealed partial class MergeViewModel : ObservableObject
         AddNewSheets = _settings.AddNewSheets;
         DeleteMissingSheets = _settings.DeleteMissingSheets;
         ResolveConflicts = _settings.ResolveConflicts;
+        UpdateWizardBindings();
     }
-
-    public const string AllSheetsLabel = "全部 Sheet";
-    public const string AllTypesLabel = "全部类型";
 
     public ObservableCollection<PreviewRow> Items { get; } = [];
     public ICollectionView ItemsView { get; }
-    public ObservableCollection<string> SheetFilters { get; } = [AllSheetsLabel];
-    public ObservableCollection<string> TypeFilters { get; } = [AllTypesLabel, "冲突", "删除冲突", "新增", "删除", "自动"];
 
     [ObservableProperty] private string _statusText = "正在加载预览...";
     [ObservableProperty] private string _summaryText = "";
     [ObservableProperty] private string _searchText = "";
-    [ObservableProperty] private string _sheetFilter = AllSheetsLabel;
-    [ObservableProperty] private string _typeFilter = AllTypesLabel;
+    [ObservableProperty] private string _currentSheetName = "正在加载...";
+    [ObservableProperty] private string _sheetProgressText = "0/0";
+    [ObservableProperty] private string _currentSheetStatusText = "";
     [ObservableProperty] private string _localCommit = "";
     [ObservableProperty] private string _remoteCommit = "";
     [ObservableProperty] private string _targetPath = "";
     [ObservableProperty] private string _backupRoot = "";
     [ObservableProperty] private bool _busy;
+    [ObservableProperty] private bool _canGenerate;
+    [ObservableProperty] private bool _canGoPrevious;
+    [ObservableProperty] private bool _canGoNext;
+    [ObservableProperty] private bool _canFinishCurrentSheet;
     [ObservableProperty] private bool _canConfirm;
     [ObservableProperty] private bool _skipNewRows;
     [ObservableProperty] private bool _skipNewColumns;
@@ -76,8 +79,7 @@ public sealed partial class MergeViewModel : ObservableObject
     [ObservableProperty] private BackupInfo? _lastBackup;
 
     partial void OnSearchTextChanged(string value) => ItemsView.Refresh();
-    partial void OnSheetFilterChanged(string value) => ItemsView.Refresh();
-    partial void OnTypeFilterChanged(string value) => ItemsView.Refresh();
+    partial void OnBusyChanged(bool value) => UpdateWizardBindings();
     partial void OnSkipNewRowsChanged(bool value) => PersistAndRefresh();
     partial void OnSkipNewColumnsChanged(bool value) => PersistAndRefresh();
     partial void OnDeleteMissingRowsChanged(bool value) => PersistAndRefresh();
@@ -118,9 +120,41 @@ public sealed partial class MergeViewModel : ObservableObject
     private void ChooseRemote(PreviewRow? row) => SetChoice(row, "remote");
 
     [RelayCommand]
+    private void PreviousSheet()
+    {
+        if (_wizard.MovePrevious())
+        {
+            RefreshCurrentSheet();
+        }
+    }
+
+    [RelayCommand]
+    private void NextSheet()
+    {
+        if (_wizard.MoveNext())
+        {
+            RefreshCurrentSheet();
+        }
+        else if (_wizard.CurrentSheet is { IsCompleted: false })
+        {
+            StatusText = "请先点击“完成本 Sheet”再继续。";
+        }
+    }
+
+    [RelayCommand]
+    private void FinishCurrentSheet()
+    {
+        if (_wizard.TryCompleteCurrentSheet())
+        {
+            StatusText = $"已完成 Sheet：{_wizard.CurrentSheet?.Name}";
+            UpdateWizardBindings();
+        }
+    }
+
+    [RelayCommand]
     private async Task GenerateAsync()
     {
-        if (_session is null)
+        if (_session is null || !CanGenerate || Busy)
         {
             return;
         }
@@ -169,6 +203,24 @@ public sealed partial class MergeViewModel : ObservableObject
         return GitCompletion.StageAndCleanup(_merged, _local, _base, _remote);
     }
 
+    public string BuildPathAiPrompt() => MergeAiPromptBuilder.BuildPathPrompt(_local, _base, _remote, _merged);
+
+    public string BuildDetailAiPrompt() => _session is not null
+        ? MergeAiPromptBuilder.BuildDetailPrompt(_local, _base, _remote, _merged, _session)
+        : MergeAiPromptBuilder.BuildDetailPrompt(
+            _local,
+            _base,
+            _remote,
+            _merged,
+            _preview ?? new MergePreview
+            {
+                Items = [],
+                ConflictEntries = [],
+                Summary = new PreviewSummary(),
+                BaseSide = BaseSide,
+                Options = [],
+            });
+
     public void DisposeSession() => _session?.Dispose();
 
     private void PersistAndRefresh()
@@ -198,26 +250,16 @@ public sealed partial class MergeViewModel : ObservableObject
         }
 
         _preview = PreviewBuilder.Build(_session, CurrentOptions());
-        var keepSheet = SheetFilter;
-        var keepType = TypeFilter;
-        Items.Clear();
-        SheetFilters.Clear();
-        SheetFilters.Add(AllSheetsLabel);
-        foreach (var item in _preview.Items)
-        {
-            Items.Add(PreviewRow.From(item, _preview.ConflictEntries));
-            if (!SheetFilters.Contains(item.Sheet))
-            {
-                SheetFilters.Add(item.Sheet);
-            }
-        }
-
-        SheetFilter = SheetFilters.Contains(keepSheet) ? keepSheet : AllSheetsLabel;
-        TypeFilter = TypeFilters.Contains(keepType) ? keepType : AllTypesLabel;
+        _wizard.ApplyPreview(_preview, _session.UnionSheetNames());
+        _allItems = _preview.Items
+            .Select(item => PreviewRow.From(item, _preview.ConflictEntries))
+            .ToList();
+        RestoreChoices();
+        RefreshCurrentSheet();
 
         var s = _preview.Summary;
-        SummaryText = $"基准={(BaseSide == "remote" ? "线上" : "本地")}；新增 {s.New}；删除 {s.Delete}；冲突 {s.Conflict}；信息 {s.Info}；合计 {Items.Count}";
-        ItemsView.Refresh();
+        SummaryText = $"基准={(BaseSide == "remote" ? "线上" : "本地")}；新增 {s.New}；删除 {s.Delete}；冲突 {s.Conflict}；信息 {s.Info}；合计 {_allItems.Count}";
+        CanConfirm = false;
     }
 
     private MergeOptions CurrentOptions() => new()
@@ -232,16 +274,7 @@ public sealed partial class MergeViewModel : ObservableObject
         BaseSide = BaseSide,
     };
 
-    private List<MergeChoice> CurrentChoices()
-    {
-        return Items.Where(i => i.Choice is not null).Select(i => new MergeChoice
-        {
-            Sheet = i.ConflictSheet ?? i.Sheet,
-            Key = i.ConflictKey ?? i.Key,
-            Choice = i.Choice == "线上" ? "remote" : "local",
-            Kind = i.IsColumn ? ConflictKind.Column : ConflictKind.Row,
-        }).ToList();
-    }
+    private List<MergeChoice> CurrentChoices() => _wizard.Choices.ToList();
 
     private void SetChoice(PreviewRow? row, string side)
     {
@@ -251,29 +284,20 @@ public sealed partial class MergeViewModel : ObservableObject
             return;
         }
 
-        row.Choice = side == "remote" ? "线上" : "本地";
-        row.Action = row.IsColumn
-            ? (side == "remote" ? "将保留线上列" : "将保留本地列")
-            : (side == "remote" ? "将保留线上" : "将保留本地");
+        var sheet = row.ConflictSheet ?? row.Sheet;
+        var key = row.ConflictKey ?? row.Key;
+        var kind = row.IsColumn ? ConflictKind.Column : ConflictKind.Row;
+        if (_wizard.TrySetChoice(sheet, key, kind, side))
+        {
+            row.ApplyChoice(side);
+            ItemsView.Refresh();
+            UpdateWizardBindings();
+        }
     }
 
     private bool FilterItem(object obj)
     {
         if (obj is not PreviewRow row)
-        {
-            return false;
-        }
-
-        if (!string.IsNullOrWhiteSpace(SheetFilter) &&
-            SheetFilter != AllSheetsLabel &&
-            row.Sheet != SheetFilter)
-        {
-            return false;
-        }
-
-        if (!string.IsNullOrWhiteSpace(TypeFilter) &&
-            TypeFilter != AllTypesLabel &&
-            row.TypeLabel != TypeFilter)
         {
             return false;
         }
@@ -286,6 +310,59 @@ public sealed partial class MergeViewModel : ObservableObject
         }
 
         return true;
+    }
+
+    private void RestoreChoices()
+    {
+        var choices = _wizard.Choices.ToDictionary(choice => choice.ChoiceKey, StringComparer.Ordinal);
+        foreach (var row in _allItems.Where(row => row.CanChoose))
+        {
+            var key = new MergeChoice
+            {
+                Sheet = row.ConflictSheet ?? row.Sheet,
+                Key = row.ConflictKey ?? row.Key,
+                Kind = row.IsColumn ? ConflictKind.Column : ConflictKind.Row,
+            }.ChoiceKey;
+            if (choices.TryGetValue(key, out var choice))
+            {
+                row.ApplyChoice(choice.Choice);
+            }
+        }
+    }
+
+    private void RefreshCurrentSheet()
+    {
+        var sheet = _wizard.CurrentSheet?.Name;
+        Items.Clear();
+        if (sheet is not null)
+        {
+            foreach (var row in _allItems.Where(row => string.Equals(row.Sheet, sheet, StringComparison.Ordinal)))
+            {
+                Items.Add(row);
+            }
+        }
+
+        SelectedItem = null;
+        ItemsView.Refresh();
+        UpdateWizardBindings();
+    }
+
+    private void UpdateWizardBindings()
+    {
+        var current = _wizard.CurrentSheet;
+        CurrentSheetName = current?.Name ?? "无可处理 Sheet";
+        SheetProgressText = _wizard.Sheets.Count == 0
+            ? "0/0"
+            : $"{_wizard.CurrentIndex + 1}/{_wizard.Sheets.Count}";
+        CurrentSheetStatusText = current is null
+            ? ""
+            : current.IsCompleted
+                ? "本 Sheet 已完成"
+                : current.HasSelectableConflicts ? "本 Sheet 有待处理冲突" : "本 Sheet 无冲突，等待确认";
+        CanGoPrevious = _wizard.CurrentIndex > 0;
+        CanGoNext = current is not null && current.IsCompleted && _wizard.CurrentIndex < _wizard.Sheets.Count - 1;
+        CanFinishCurrentSheet = current is { IsCompleted: false };
+        CanGenerate = _wizard.CanGenerate && !Busy;
     }
 
     private static string FormatCommit(string title, GitCommitInfo? info)
@@ -320,6 +397,14 @@ public sealed partial class PreviewRow : ObservableObject
 
     private static IReadOnlyList<string> Display(IReadOnlyList<string> values) =>
         values.Count > 0 ? values : ["（此侧没有该行）"];
+
+    public void ApplyChoice(string side)
+    {
+        Choice = side == "remote" || side == "线上" ? "线上" : "本地";
+        Action = IsColumn
+            ? (Choice == "线上" ? "将保留线上列" : "将保留本地列")
+            : (Choice == "线上" ? "将保留线上" : "将保留本地");
+    }
 
     public static PreviewRow From(PreviewItem item, IReadOnlyList<MergeChoice> conflicts)
     {

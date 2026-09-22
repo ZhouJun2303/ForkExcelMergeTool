@@ -26,6 +26,23 @@ public partial class MergeWindow
 
     private void OnCancel(object sender, RoutedEventArgs e) => Close();
 
+    private void CopyPathsToAi(object sender, RoutedEventArgs e) => CopyAiPrompt(_vm.BuildPathAiPrompt());
+
+    private void CopyConflictsToAi(object sender, RoutedEventArgs e) => CopyAiPrompt(_vm.BuildDetailAiPrompt());
+
+    private void CopyAiPrompt(string prompt)
+    {
+        try
+        {
+            Clipboard.SetText(prompt);
+            Close();
+        }
+        catch (Exception ex)
+        {
+            _vm.StatusText = "复制失败：" + ex.Message;
+        }
+    }
+
     private void OnConfirm(object sender, RoutedEventArgs e)
     {
         var result = _vm.Confirm();

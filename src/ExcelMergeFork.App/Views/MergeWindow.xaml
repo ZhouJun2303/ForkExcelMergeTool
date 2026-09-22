@@ -50,15 +50,20 @@
                     <CheckBox Content="处理冲突" IsChecked="{Binding ResolveConflicts}" Margin="12,0,0,0"/>
                 </WrapPanel>
                 <DockPanel Margin="0,10,0,0">
-                    <ComboBox DockPanel.Dock="Right" Width="160"
-                              ItemsSource="{Binding SheetFilters}"
-                              SelectedItem="{Binding SheetFilter, Mode=TwoWay}"/>
-                    <ComboBox DockPanel.Dock="Right" Width="120" Margin="0,0,8,0"
-                              ItemsSource="{Binding TypeFilters}"
-                              SelectedItem="{Binding TypeFilter, Mode=TwoWay}"/>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button Content="上一个 Sheet" Command="{Binding PreviousSheetCommand}" IsEnabled="{Binding CanGoPrevious}" Padding="10,4" Margin="0,0,6,0"/>
+                        <Button Content="下一个 Sheet" Command="{Binding NextSheetCommand}" IsEnabled="{Binding CanGoNext}" Padding="10,4" Margin="0,0,6,0"/>
+                        <Button Content="完成本 Sheet" Command="{Binding FinishCurrentSheetCommand}" IsEnabled="{Binding CanFinishCurrentSheet}" Padding="10,4"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                        <TextBlock Text="当前 Sheet："/>
+                        <TextBlock Text="{Binding CurrentSheetName}" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding SheetProgressText}" Opacity="0.7" Margin="8,0,0,0"/>
+                    </StackPanel>
                     <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
                 </DockPanel>
                 <TextBlock Text="{Binding SummaryText}" Opacity="0.7" Margin="0,8,0,0"/>
+                <TextBlock Text="{Binding CurrentSheetStatusText}" Opacity="0.7" Margin="0,4,0,0"/>
             </StackPanel>
         </Border>
 
@@ -123,7 +128,9 @@
         <DockPanel Grid.Row="5" Margin="20,0,20,16">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                 <Button Content="取消" Click="OnCancel" Margin="0,0,8,0" Padding="16,8"/>
-                <Button Content="生成合并结果" Command="{Binding GenerateCommand}" Padding="16,8" Margin="0,0,8,0"/>
+                <Button Content="复制路径给 AI" Click="CopyPathsToAi" Padding="12,8" Margin="0,0,8,0"/>
+                <Button Content="复制冲突给 AI" Click="CopyConflictsToAi" Padding="12,8" Margin="0,0,8,0"/>
+                <Button Content="生成合并结果" Command="{Binding GenerateCommand}" IsEnabled="{Binding CanGenerate}" Padding="16,8" Margin="0,0,8,0"/>
                 <Button Content="确认并解决冲突" Click="OnConfirm" IsEnabled="{Binding CanConfirm}" Padding="16,8"/>
             </StackPanel>
             <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" TextWrapping="Wrap"/>
