@@ -15,6 +15,7 @@ public class MergeWizardStateTests
             ["Main", "Info"]);
 
         Assert.False(state.CanGenerate);
+        Assert.Equal(["Main", "Info"], state.UnconfirmedSheetNames);
         Assert.False(state.Sheets[1].IsCompleted);
         Assert.False(state.MoveNext());
 
@@ -22,8 +23,10 @@ public class MergeWizardStateTests
         Assert.True(state.MoveNext());
         Assert.Equal("Info", state.CurrentSheet?.Name);
         Assert.False(state.CanGenerate);
+        Assert.Equal(["Info"], state.UnconfirmedSheetNames);
         Assert.True(state.TryCompleteCurrentSheet());
         Assert.True(state.CanGenerate);
+        Assert.Empty(state.UnconfirmedSheetNames);
     }
 
     [Fact]

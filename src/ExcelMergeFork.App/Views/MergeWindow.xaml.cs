@@ -26,9 +26,38 @@ public partial class MergeWindow
 
     private void OnCancel(object sender, RoutedEventArgs e) => Close();
 
-    private void CopyPathsToAi(object sender, RoutedEventArgs e) => CopyAiPrompt(_vm.BuildPathAiPrompt());
+    private void ToggleAiPanel(object sender, RoutedEventArgs e)
+    {
+        var open = AiPanel.Visibility != Visibility.Visible;
+        AiPanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        AiToggleButton.Content = open ? "收起 AI 合并" : "AI 合并";
+    }
 
-    private void CopyConflictsToAi(object sender, RoutedEventArgs e) => CopyAiPrompt(_vm.BuildDetailAiPrompt());
+    private async void CopySelectedPathsToAi(object sender, RoutedEventArgs e) =>
+        await CopyCheckedPromptAsync(detail: false);
+
+    private async void CopySelectedConflictsToAi(object sender, RoutedEventArgs e) =>
+        await CopyCheckedPromptAsync(detail: true);
+
+    private async Task CopyCheckedPromptAsync(bool detail)
+    {
+        try
+        {
+            var prompt = detail
+                ? await _vm.BuildCheckedDetailPromptAsync()
+                : await _vm.BuildCheckedPathPromptAsync();
+            if (string.IsNullOrWhiteSpace(prompt))
+            {
+                return;
+            }
+
+            CopyAiPrompt(prompt);
+        }
+        catch (Exception ex)
+        {
+            _vm.AiStatusText = "复制失败：" + ex.Message;
+        }
+    }
 
     private void CopyAiPrompt(string prompt)
     {
@@ -40,7 +69,29 @@ public partial class MergeWindow
         catch (Exception ex)
         {
             _vm.StatusText = "复制失败：" + ex.Message;
+            _vm.AiStatusText = "复制失败：" + ex.Message;
         }
+    }
+
+    private async void OnGenerate(object sender, RoutedEventArgs e)
+    {
+        if (!_vm.AllSheetsConfirmed)
+        {
+            var pending = _vm.UnconfirmedSheetNames;
+            var detail = pending.Count == 0
+                ? "没有可确认的 Sheet。"
+                : "以下 Sheet 尚未确认：\n" + string.Join("\n", pending);
+            _vm.StatusText = "请先确认全部 Sheet。";
+            MessageBox.Show(
+                this,
+                detail + "\n\n请先对每个 Sheet 点击“确认本 Sheet”，再生成合并结果。",
+                "ExcelMergeFork",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        await _vm.GenerateCommand.ExecuteAsync(null);
     }
 
     private void OnConfirm(object sender, RoutedEventArgs e)

@@ -3,137 +3,198 @@
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  Title="Excel 三向合并"
-                 Width="1280" Height="820"
-                 MinWidth="980" MinHeight="640"
+                 Width="1520" Height="820"
+                 MinWidth="1180" MinHeight="640"
                  Icon="pack://application:,,,/Assets/ExcelMergeFork.ico"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica">
     <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="220"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <ui:TitleBar Title="Excel 三向合并" Grid.Row="0">
+        <ui:TitleBar Title="Excel 三向合并" Grid.Row="0" Grid.ColumnSpan="2">
             <ui:TitleBar.Icon>
                 <ui:ImageIcon Source="pack://application:,,,/Assets/app_32.png"/>
             </ui:TitleBar.Icon>
         </ui:TitleBar>
 
-        <DockPanel Grid.Row="1" Margin="20,8,20,0">
-            <Button DockPanel.Dock="Right" Content="设置中心" Click="OpenSettings" Padding="12,6"/>
-            <StackPanel>
-                <TextBlock Text="Excel 三向合并" FontSize="22" FontWeight="SemiBold"/>
-                <TextBlock Text="{Binding LocalCommit}" Opacity="0.75" Margin="0,4,0,0"/>
-                <TextBlock Text="{Binding RemoteCommit}" Opacity="0.75"/>
-                <TextBlock Text="{Binding TargetPath}" Opacity="0.55" Margin="0,2,0,0"/>
-            </StackPanel>
-        </DockPanel>
+        <Grid Grid.Row="1" Grid.Column="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="220"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-        <Border Grid.Row="2" Margin="20,12,20,8" Padding="12" CornerRadius="8" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
-            <StackPanel>
-                <WrapPanel>
-                    <TextBlock Text="基准侧" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <ComboBox Width="140" SelectedValue="{Binding BaseSide}" SelectedValuePath="Tag">
-                        <ComboBoxItem Content="本地 Local" Tag="local" IsSelected="True"/>
-                        <ComboBoxItem Content="线上 Remote" Tag="remote"/>
-                    </ComboBox>
-                    <CheckBox Content="跳过新增行" IsChecked="{Binding SkipNewRows}" Margin="16,0,0,0"/>
-                    <CheckBox Content="跳过新增列" IsChecked="{Binding SkipNewColumns}" Margin="12,0,0,0"/>
-                    <CheckBox Content="删除缺失行" IsChecked="{Binding DeleteMissingRows}" Margin="12,0,0,0"/>
-                    <CheckBox Content="删除缺失列" IsChecked="{Binding DeleteMissingColumns}" Margin="12,0,0,0"/>
-                    <CheckBox Content="追加新 Sheet" IsChecked="{Binding AddNewSheets}" Margin="12,0,0,0"/>
-                    <CheckBox Content="删除缺失 Sheet" IsChecked="{Binding DeleteMissingSheets}" Margin="12,0,0,0"/>
-                    <CheckBox Content="处理冲突" IsChecked="{Binding ResolveConflicts}" Margin="12,0,0,0"/>
-                </WrapPanel>
-                <DockPanel Margin="0,10,0,0">
-                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                        <Button Content="上一个 Sheet" Command="{Binding PreviousSheetCommand}" IsEnabled="{Binding CanGoPrevious}" Padding="10,4" Margin="0,0,6,0"/>
-                        <Button Content="下一个 Sheet" Command="{Binding NextSheetCommand}" IsEnabled="{Binding CanGoNext}" Padding="10,4" Margin="0,0,6,0"/>
-                        <Button Content="完成本 Sheet" Command="{Binding FinishCurrentSheetCommand}" IsEnabled="{Binding CanFinishCurrentSheet}" Padding="10,4"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
-                        <TextBlock Text="当前 Sheet："/>
-                        <TextBlock Text="{Binding CurrentSheetName}" FontWeight="SemiBold"/>
-                        <TextBlock Text="{Binding SheetProgressText}" Opacity="0.7" Margin="8,0,0,0"/>
-                    </StackPanel>
-                    <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
-                </DockPanel>
-                <TextBlock Text="{Binding SummaryText}" Opacity="0.7" Margin="0,8,0,0"/>
-                <TextBlock Text="{Binding CurrentSheetStatusText}" Opacity="0.7" Margin="0,4,0,0"/>
-            </StackPanel>
-        </Border>
+            <DockPanel Grid.Row="0" Margin="20,8,20,0">
+                <Button DockPanel.Dock="Right" Content="设置中心" Click="OpenSettings" Padding="12,6"/>
+                <Button x:Name="AiToggleButton" DockPanel.Dock="Right" Content="收起 AI 合并" Click="ToggleAiPanel" Padding="12,6" Margin="0,0,8,0"/>
+                <StackPanel>
+                    <TextBlock Text="Excel 三向合并" FontSize="22" FontWeight="SemiBold"/>
+                    <TextBlock Text="{Binding LocalCommit}" Opacity="0.75" Margin="0,4,0,0"/>
+                    <TextBlock Text="{Binding RemoteCommit}" Opacity="0.75"/>
+                    <TextBlock Text="{Binding TargetPath}" Opacity="0.55" Margin="0,2,0,0"/>
+                </StackPanel>
+            </DockPanel>
 
-        <ListView Grid.Row="3" Margin="20,0,20,8"
-                  ItemsSource="{Binding ItemsView}"
-                  SelectedItem="{Binding SelectedItem}"
-                  VirtualizingPanel.IsVirtualizing="True"
-                  VirtualizingPanel.VirtualizationMode="Recycling"
-                  ScrollViewer.CanContentScroll="True"
-                  BorderThickness="0">
-            <ListView.ItemTemplate>
-                <DataTemplate>
-                    <Grid Margin="0,4">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="88"/>
-                            <ColumnDefinition Width="160"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="220"/>
-                            <ColumnDefinition Width="180"/>
-                        </Grid.ColumnDefinitions>
-                        <Border Grid.Column="0" CornerRadius="6" Padding="8,4" HorizontalAlignment="Left"
-                                Background="{DynamicResource ControlFillColorDefaultBrush}">
-                            <TextBlock Text="{Binding TypeLabel}" FontWeight="SemiBold"/>
-                        </Border>
-                        <TextBlock Grid.Column="1" Text="{Binding Sheet}" VerticalAlignment="Center"/>
-                        <TextBlock Grid.Column="2" Text="{Binding Key}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                        <TextBlock Grid.Column="3" Text="{Binding Action}" VerticalAlignment="Center" Opacity="0.75"/>
-                        <StackPanel Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Right">
-                            <Button Content="本地" Command="{Binding DataContext.ChooseLocalCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
-                                    CommandParameter="{Binding}" IsEnabled="{Binding CanChoose}" Margin="0,0,6,0" Padding="10,4"/>
-                            <Button Content="线上" Command="{Binding DataContext.ChooseRemoteCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
-                                    CommandParameter="{Binding}" IsEnabled="{Binding CanChoose}" Padding="10,4"/>
+            <Border Grid.Row="1" Margin="20,12,20,8" Padding="12" CornerRadius="8" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                <StackPanel>
+                    <WrapPanel>
+                        <TextBlock Text="基准侧" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox Width="140" SelectedValue="{Binding BaseSide}" SelectedValuePath="Tag">
+                            <ComboBoxItem Content="本地 Local" Tag="local" IsSelected="True"/>
+                            <ComboBoxItem Content="线上 Remote" Tag="remote"/>
+                        </ComboBox>
+                        <CheckBox Content="跳过新增行" IsChecked="{Binding SkipNewRows}" Margin="16,0,0,0"/>
+                        <CheckBox Content="跳过新增列" IsChecked="{Binding SkipNewColumns}" Margin="12,0,0,0"/>
+                        <CheckBox Content="删除缺失行" IsChecked="{Binding DeleteMissingRows}" Margin="12,0,0,0"/>
+                        <CheckBox Content="删除缺失列" IsChecked="{Binding DeleteMissingColumns}" Margin="12,0,0,0"/>
+                        <CheckBox Content="追加新 Sheet" IsChecked="{Binding AddNewSheets}" Margin="12,0,0,0"/>
+                        <CheckBox Content="删除缺失 Sheet" IsChecked="{Binding DeleteMissingSheets}" Margin="12,0,0,0"/>
+                        <CheckBox Content="处理冲突" IsChecked="{Binding ResolveConflicts}" Margin="12,0,0,0"/>
+                    </WrapPanel>
+                    <DockPanel Margin="0,10,0,0">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Content="上一个 Sheet" Command="{Binding PreviousSheetCommand}" IsEnabled="{Binding CanGoPrevious}" Padding="10,4" Margin="0,0,6,0"/>
+                            <Button Content="下一个 Sheet" Command="{Binding NextSheetCommand}" IsEnabled="{Binding CanGoNext}" Padding="10,4" Margin="0,0,6,0"/>
+                            <Button Content="确认本 Sheet" Command="{Binding FinishCurrentSheetCommand}" IsEnabled="{Binding CanFinishCurrentSheet}" Padding="10,4"/>
                         </StackPanel>
-                    </Grid>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                            <TextBlock Text="当前 Sheet："/>
+                            <TextBlock Text="{Binding CurrentSheetName}" FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding SheetProgressText}" Opacity="0.7" Margin="8,0,0,0"/>
+                        </StackPanel>
+                        <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
+                    </DockPanel>
+                    <TextBlock Text="{Binding SummaryText}" Opacity="0.7" Margin="0,8,0,0"/>
+                    <TextBlock Text="{Binding CurrentSheetStatusText}" Opacity="0.7" Margin="0,4,0,0"/>
+                </StackPanel>
+            </Border>
 
-        <Grid Grid.Row="4" Margin="20,0,20,8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition/>
-                <ColumnDefinition/>
-                <ColumnDefinition/>
-            </Grid.ColumnDefinitions>
-            <GroupBox Header="BASE" Grid.Column="0" Margin="0,0,6,0">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding SelectedItem.BaseDisplay}" Margin="8"/>
-                </ScrollViewer>
-            </GroupBox>
-            <GroupBox Header="LOCAL" Grid.Column="1" Margin="3,0">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding SelectedItem.LocalDisplay}" Margin="8"/>
-                </ScrollViewer>
-            </GroupBox>
-            <GroupBox Header="REMOTE" Grid.Column="2" Margin="6,0,0,0">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding SelectedItem.RemoteDisplay}" Margin="8"/>
-                </ScrollViewer>
-            </GroupBox>
+            <ListView Grid.Row="2" Margin="20,0,20,8"
+                      ItemsSource="{Binding ItemsView}"
+                      SelectedItem="{Binding SelectedItem}"
+                      VirtualizingPanel.IsVirtualizing="True"
+                      VirtualizingPanel.VirtualizationMode="Recycling"
+                      ScrollViewer.CanContentScroll="True"
+                      BorderThickness="0">
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Margin="0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="88"/>
+                                <ColumnDefinition Width="160"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="220"/>
+                                <ColumnDefinition Width="180"/>
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" CornerRadius="6" Padding="8,4" HorizontalAlignment="Left"
+                                    Background="{DynamicResource ControlFillColorDefaultBrush}">
+                                <TextBlock Text="{Binding TypeLabel}" FontWeight="SemiBold"/>
+                            </Border>
+                            <TextBlock Grid.Column="1" Text="{Binding Sheet}" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="2" Text="{Binding Key}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Grid.Column="3" Text="{Binding Action}" VerticalAlignment="Center" Opacity="0.75"/>
+                            <StackPanel Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button Content="本地" Command="{Binding DataContext.ChooseLocalCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
+                                        CommandParameter="{Binding}" IsEnabled="{Binding CanChoose}" Margin="0,0,6,0" Padding="10,4"/>
+                                <Button Content="线上" Command="{Binding DataContext.ChooseRemoteCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
+                                        CommandParameter="{Binding}" IsEnabled="{Binding CanChoose}" Padding="10,4"/>
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+
+            <Grid Grid.Row="3" Margin="20,0,20,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition/>
+                    <ColumnDefinition/>
+                </Grid.ColumnDefinitions>
+                <GroupBox Header="BASE" Grid.Column="0" Margin="0,0,6,0">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding SelectedItem.BaseDisplay}" Margin="8"/>
+                    </ScrollViewer>
+                </GroupBox>
+                <GroupBox Header="LOCAL" Grid.Column="1" Margin="3,0">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding SelectedItem.LocalDisplay}" Margin="8"/>
+                    </ScrollViewer>
+                </GroupBox>
+                <GroupBox Header="REMOTE" Grid.Column="2" Margin="6,0,0,0">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding SelectedItem.RemoteDisplay}" Margin="8"/>
+                    </ScrollViewer>
+                </GroupBox>
+            </Grid>
+
+            <DockPanel Grid.Row="4" Margin="20,0,20,16">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="取消" Click="OnCancel" Margin="0,0,8,0" Padding="16,8"/>
+                    <Button Content="生成合并结果" Click="OnGenerate" IsEnabled="{Binding CanAttemptGenerate}" Padding="16,8" Margin="0,0,8,0"/>
+                    <Button Content="确认并解决冲突" Click="OnConfirm" IsEnabled="{Binding CanConfirm}" Padding="16,8"/>
+                </StackPanel>
+                <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+            </DockPanel>
         </Grid>
 
-        <DockPanel Grid.Row="5" Margin="20,0,20,16">
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                <Button Content="取消" Click="OnCancel" Margin="0,0,8,0" Padding="16,8"/>
-                <Button Content="复制路径给 AI" Click="CopyPathsToAi" Padding="12,8" Margin="0,0,8,0"/>
-                <Button Content="复制冲突给 AI" Click="CopyConflictsToAi" Padding="12,8" Margin="0,0,8,0"/>
-                <Button Content="生成合并结果" Command="{Binding GenerateCommand}" IsEnabled="{Binding CanGenerate}" Padding="16,8" Margin="0,0,8,0"/>
-                <Button Content="确认并解决冲突" Click="OnConfirm" IsEnabled="{Binding CanConfirm}" Padding="16,8"/>
-            </StackPanel>
-            <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" TextWrapping="Wrap"/>
-        </DockPanel>
+        <Border x:Name="AiPanel" Grid.Row="1" Grid.Column="1" Width="440" Margin="0,8,16,16" Padding="14"
+                CornerRadius="8" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Text="AI 合并" FontSize="18" FontWeight="SemiBold"/>
+                    <TextBlock Text="勾选当前冲突仓库里要交给 AI 的 Excel。每条下面是文件路径。"
+                               Opacity="0.75" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                    <TextBlock Text="{Binding AiRepoText}" TextWrapping="Wrap" Opacity="0.8" Margin="0,8,0,0"/>
+                    <TextBlock Text="{Binding AiSummaryText}" Margin="0,4,0,8"/>
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                    <TextBlock Text="复制后会关闭本窗口，方便 AI 读取这些文件。" Opacity="0.65" TextWrapping="Wrap" Margin="0,0,0,6"/>
+                    <TextBlock Text="{Binding AiStatusText}" TextWrapping="Wrap" Opacity="0.75" Margin="0,0,0,8"/>
+                    <WrapPanel>
+                        <Button Content="刷新" Command="{Binding RefreshAiFilesCommand}" Padding="10,6" Margin="0,0,6,6"/>
+                        <Button Content="全选" Command="{Binding CheckAllAiFilesCommand}" Padding="10,6" Margin="0,0,6,6"/>
+                        <Button Content="全不选" Command="{Binding UncheckAllAiFilesCommand}" Padding="10,6" Margin="0,0,6,6"/>
+                    </WrapPanel>
+                    <WrapPanel>
+                        <Button Content="复制路径给 AI" Click="CopySelectedPathsToAi" IsEnabled="{Binding CanUseAi}" Padding="10,6" Margin="0,0,6,6"/>
+                        <Button Content="复制冲突给 AI" Click="CopySelectedConflictsToAi" IsEnabled="{Binding CanUseAi}" Padding="10,6" Margin="0,0,6,6"/>
+                    </WrapPanel>
+                </StackPanel>
+                <ListView ItemsSource="{Binding AiFiles}" BorderThickness="0"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                          ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="2,4"/>
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="0,4">
+                                <CheckBox IsChecked="{Binding IsChecked}" FontWeight="SemiBold">
+                                    <TextBlock Text="{Binding RelativePath}" TextWrapping="Wrap"/>
+                                </CheckBox>
+                                <TextBlock Text="{Binding FullPath}" Margin="22,3,0,0" Opacity="0.8" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding ExtraPathText}" Margin="22,2,0,0" Opacity="0.7" TextWrapping="Wrap"/>
+                                <TextBlock Margin="22,2,0,0" Opacity="0.65" TextWrapping="Wrap">
+                                    <Run Text="{Binding StatusLabel, Mode=OneWay}"/>
+                                    <Run Text="  "/>
+                                    <Run Text="{Binding SidesText, Mode=OneWay}"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </DockPanel>
+        </Border>
     </Grid>
 </ui:FluentWindow>

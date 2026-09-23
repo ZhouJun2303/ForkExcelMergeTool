@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Windows.Data;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -49,6 +50,7 @@ public sealed partial class MergeViewModel : ObservableObject
     }
 
     public ObservableCollection<PreviewRow> Items { get; } = [];
+    public ObservableCollection<AiConflictPick> AiFiles { get; } = [];
     public ICollectionView ItemsView { get; }
 
     [ObservableProperty] private string _statusText = "正在加载预览...";
@@ -63,6 +65,7 @@ public sealed partial class MergeViewModel : ObservableObject
     [ObservableProperty] private string _backupRoot = "";
     [ObservableProperty] private bool _busy;
     [ObservableProperty] private bool _canGenerate;
+    [ObservableProperty] private bool _canAttemptGenerate;
     [ObservableProperty] private bool _canGoPrevious;
     [ObservableProperty] private bool _canGoNext;
     [ObservableProperty] private bool _canFinishCurrentSheet;
@@ -77,9 +80,17 @@ public sealed partial class MergeViewModel : ObservableObject
     [ObservableProperty] private string _baseSide = "local";
     [ObservableProperty] private PreviewRow? _selectedItem;
     [ObservableProperty] private BackupInfo? _lastBackup;
+    [ObservableProperty] private string _aiRepoText = "";
+    [ObservableProperty] private string _aiSummaryText = "正在查找冲突 Excel...";
+    [ObservableProperty] private string _aiStatusText = "正在查找冲突 Excel...";
+    [ObservableProperty] private bool _canUseAi = true;
 
     partial void OnSearchTextChanged(string value) => ItemsView.Refresh();
-    partial void OnBusyChanged(bool value) => UpdateWizardBindings();
+    partial void OnBusyChanged(bool value)
+    {
+        CanUseAi = !value;
+        UpdateWizardBindings();
+    }
     partial void OnSkipNewRowsChanged(bool value) => PersistAndRefresh();
     partial void OnSkipNewColumnsChanged(bool value) => PersistAndRefresh();
     partial void OnDeleteMissingRowsChanged(bool value) => PersistAndRefresh();
@@ -109,9 +120,51 @@ public sealed partial class MergeViewModel : ObservableObject
         }
         finally
         {
+            try
+            {
+                await LoadAiFilesAsync();
+            }
+            catch (Exception ex)
+            {
+                AiStatusText = "查找冲突 Excel 失败：" + ex.Message;
+            }
+
             Busy = false;
         }
     }
+
+    [RelayCommand]
+    private async Task RefreshAiFilesAsync()
+    {
+        if (Busy)
+        {
+            return;
+        }
+
+        Busy = true;
+        try
+        {
+            await LoadAiFilesAsync();
+        }
+        catch (Exception ex)
+        {
+            AiStatusText = "查找冲突 Excel 失败：" + ex.Message;
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    [RelayCommand]
+    private void CheckAllAiFiles() => SetAllAiChecks(true);
+
+    [RelayCommand]
+    private void UncheckAllAiFiles() => SetAllAiChecks(false);
+
+    public async Task<string?> BuildCheckedPathPromptAsync() => await BuildCheckedPromptAsync(detail: false);
+
+    public async Task<string?> BuildCheckedDetailPromptAsync() => await BuildCheckedPromptAsync(detail: true);
 
     [RelayCommand]
     private void ChooseLocal(PreviewRow? row) => SetChoice(row, "local");
@@ -137,18 +190,27 @@ public sealed partial class MergeViewModel : ObservableObject
         }
         else if (_wizard.CurrentSheet is { IsCompleted: false })
         {
-            StatusText = "请先点击“完成本 Sheet”再继续。";
+            StatusText = "请先点击“确认本 Sheet”再继续。";
         }
     }
 
     [RelayCommand]
     private void FinishCurrentSheet()
     {
-        if (_wizard.TryCompleteCurrentSheet())
+        var name = _wizard.CurrentSheet?.Name;
+        if (!_wizard.TryCompleteCurrentSheet())
         {
-            StatusText = $"已完成 Sheet：{_wizard.CurrentSheet?.Name}";
-            UpdateWizardBindings();
+            return;
         }
+
+        StatusText = $"已确认 Sheet：{name}";
+        if (_wizard.MoveNext())
+        {
+            RefreshCurrentSheet();
+            return;
+        }
+
+        UpdateWizardBindings();
     }
 
     [RelayCommand]
@@ -202,24 +264,6 @@ public sealed partial class MergeViewModel : ObservableObject
 
         return GitCompletion.StageAndCleanup(_merged, _local, _base, _remote);
     }
-
-    public string BuildPathAiPrompt() => MergeAiPromptBuilder.BuildPathPrompt(_local, _base, _remote, _merged);
-
-    public string BuildDetailAiPrompt() => _session is not null
-        ? MergeAiPromptBuilder.BuildDetailPrompt(_local, _base, _remote, _merged, _session)
-        : MergeAiPromptBuilder.BuildDetailPrompt(
-            _local,
-            _base,
-            _remote,
-            _merged,
-            _preview ?? new MergePreview
-            {
-                Items = [],
-                ConflictEntries = [],
-                Summary = new PreviewSummary(),
-                BaseSide = BaseSide,
-                Options = [],
-            });
 
     public void DisposeSession() => _session?.Dispose();
 
@@ -357,12 +401,341 @@ public sealed partial class MergeViewModel : ObservableObject
         CurrentSheetStatusText = current is null
             ? ""
             : current.IsCompleted
-                ? "本 Sheet 已完成"
+                ? "本 Sheet 已确认"
                 : current.HasSelectableConflicts ? "本 Sheet 有待处理冲突" : "本 Sheet 无冲突，等待确认";
         CanGoPrevious = _wizard.CurrentIndex > 0;
         CanGoNext = current is not null && current.IsCompleted && _wizard.CurrentIndex < _wizard.Sheets.Count - 1;
         CanFinishCurrentSheet = current is { IsCompleted: false };
         CanGenerate = _wizard.CanGenerate && !Busy;
+        CanAttemptGenerate = _session is not null && !Busy;
+    }
+
+    public bool AllSheetsConfirmed => _wizard.CanGenerate;
+
+    public IReadOnlyList<string> UnconfirmedSheetNames => _wizard.UnconfirmedSheetNames;
+
+    private async Task LoadAiFilesAsync()
+    {
+        AiStatusText = "正在查找冲突 Excel...";
+        var repo = ResolveRepoRoot();
+        var scan = repo is null
+            ? new RepoConflictScan()
+            : await Task.Run(() => RepoConflictExcelFinder.Scan(repo));
+        ApplyAiFiles(repo, scan);
+    }
+
+    private async Task<string?> BuildCheckedPromptAsync(bool detail)
+    {
+        var selected = AiFiles.Where(file => file.IsChecked).ToList();
+        if (selected.Count == 0)
+        {
+            AiStatusText = "请先勾选要交给 AI 的 Excel";
+            return null;
+        }
+
+        Busy = true;
+        AiStatusText = detail ? "正在读取勾选的 Excel..." : "正在整理勾选的路径...";
+        try
+        {
+            var currentPreview = detail && _preview is not null ? CurrentPreviewForAi() : null;
+            var missingPreview = detail && _preview is null;
+            var books = await Task.Run(() => selected.Select(file => ToPromptBook(file, detail, currentPreview, missingPreview)).ToList());
+            AiStatusText = $"已整理 {books.Count} 个 Excel";
+            return detail
+                ? MergeAiPromptBuilder.BuildBatchDetailPrompt(books)
+                : MergeAiPromptBuilder.BuildBatchPathPrompt(books);
+        }
+        catch (Exception ex)
+        {
+            AiStatusText = "整理失败：" + ex.Message;
+            return null;
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    private void ApplyAiFiles(string? repo, RepoConflictScan scan)
+    {
+        var previous = AiFiles.ToDictionary(file => file.FullPath, file => file.IsChecked, StringComparer.OrdinalIgnoreCase);
+        var currentFull = repo is null ? null : CurrentWorktreePath(repo);
+        var seenCurrent = false;
+        var picks = new List<AiConflictPick>();
+        foreach (var file in scan.Files)
+        {
+            var isCurrent = currentFull is not null && SamePath(file.WorktreePath, currentFull);
+            if (isCurrent)
+            {
+                seenCurrent = true;
+            }
+
+            picks.Add(CreatePick(file.RelativePath, file.WorktreePath, isCurrent, file.HasBothSides, isCurrent, repo, file, previous));
+        }
+
+        if (!seenCurrent)
+        {
+            var full = currentFull ?? SafeFullPath(_merged);
+            var relative = repo is not null && currentFull is not null
+                ? Path.GetRelativePath(repo, currentFull).Replace('\\', '/')
+                : Path.GetFileName(full);
+            picks.Insert(0, CreatePick(relative, full, true, true, true, repo, null, previous));
+        }
+
+        picks = picks
+            .OrderBy(file => file.IsCurrent ? 0 : 1)
+            .ThenBy(file => file.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        AiFiles.Clear();
+        foreach (var pick in picks)
+        {
+            pick.CheckedChanged += (_, _) => UpdateAiSummary();
+            AiFiles.Add(pick);
+        }
+
+        AiRepoText = repo is null ? "未找到 Git 仓库，下面只列出当前正在合并的文件。" : "仓库：" + repo;
+        AiStatusText = scan.Error
+            ?? (repo is null
+                ? "当前文件不在 Git 仓库中"
+                : scan.Files.Count == 0
+                    ? "当前仓库没有其他未合并的 Excel"
+                    : $"已找到 {scan.Files.Count} 个未合并的 Excel");
+        UpdateAiSummary();
+    }
+
+    private AiConflictPick CreatePick(
+        string relative,
+        string full,
+        bool isCurrent,
+        bool hasBothSides,
+        bool useLaunchPaths,
+        string? repo,
+        RepoConflictExcel? source,
+        Dictionary<string, bool> previous)
+    {
+        var status = isCurrent && hasBothSides && source is not null
+            ? "当前正在合并 · 双方都有修改"
+            : isCurrent
+                ? "当前正在合并"
+                : hasBothSides
+                    ? "双方都有修改"
+                    : "冲突文件不完整";
+        var checkedByDefault = isCurrent || hasBothSides;
+        return new AiConflictPick
+        {
+            RelativePath = relative,
+            FullPath = full,
+            StatusLabel = status,
+            SidesText = SidesText(source, useLaunchPaths),
+            ExtraPathText = useLaunchPaths ? LaunchPathText() : "",
+            IsCurrent = isCurrent,
+            HasBothSides = hasBothSides,
+            UseLaunchPaths = useLaunchPaths,
+            RepoRoot = repo,
+            Source = source,
+            IsChecked = previous.TryGetValue(full, out var wasChecked) ? wasChecked : checkedByDefault,
+        };
+    }
+
+    private AiPromptBook ToPromptBook(AiConflictPick file, bool detail, MergePreview? currentPreview, bool missingPreview)
+    {
+        if (file.UseLaunchPaths)
+        {
+            return new AiPromptBook
+            {
+                Label = file.RelativePath,
+                WorktreePath = file.FullPath,
+                Local = _local,
+                Base = _base,
+                Remote = _remote,
+                Merged = _merged,
+                Preview = detail ? currentPreview : null,
+                ReadError = missingPreview ? "当前预览尚未加载" : null,
+            };
+        }
+
+        if (file.Source is null || string.IsNullOrWhiteSpace(file.RepoRoot))
+        {
+            return new AiPromptBook
+            {
+                Label = file.RelativePath,
+                WorktreePath = file.FullPath,
+                ReadError = "没有仓库阶段信息",
+            };
+        }
+
+        var stageRoot = AiMergeBatch.StageRootFor(file.RepoRoot);
+        return detail
+            ? AiMergeBatch.MaterializeWithPreview(file.RepoRoot, file.Source, stageRoot)
+            : AiMergeBatch.MaterializePaths(file.RepoRoot, file.Source, stageRoot);
+    }
+
+    private MergePreview CurrentPreviewForAi()
+    {
+        if (_preview is null)
+        {
+            return new MergePreview
+            {
+                Items = [],
+                ConflictEntries = CurrentChoices(),
+                Summary = new PreviewSummary(),
+                BaseSide = BaseSide,
+                Options = [],
+            };
+        }
+
+        var choices = CurrentChoices().ToDictionary(choice => choice.ChoiceKey, StringComparer.Ordinal);
+        var entries = _preview.ConflictEntries.Select(entry => new MergeChoice
+        {
+            Sheet = entry.Sheet,
+            Key = entry.Key,
+            Kind = entry.Kind,
+            Choice = choices.TryGetValue(entry.ChoiceKey, out var chosen) ? chosen.Choice : entry.Choice,
+            AutoType = entry.AutoType,
+        }).ToList();
+        var items = _preview.Items.Select(item =>
+        {
+            var action = item.Action;
+            if (item.ConflictIndex is int index && index >= 0 && index < entries.Count)
+            {
+                var entry = entries[index];
+                var remote = entry.Choice == "remote";
+                action = entry.Kind == ConflictKind.Column
+                    ? remote ? "将保留线上列" : "将保留本地列"
+                    : remote ? "将保留线上" : "将保留本地";
+            }
+
+            return new PreviewItem
+            {
+                Sheet = item.Sheet,
+                Key = item.Key,
+                Action = action,
+                Tag = item.Tag,
+                ConflictIndex = item.ConflictIndex,
+                LocalValues = item.LocalValues,
+                RemoteValues = item.RemoteValues,
+                BaseValues = item.BaseValues,
+            };
+        }).ToList();
+        return new MergePreview
+        {
+            Items = items,
+            ConflictEntries = entries,
+            Summary = _preview.Summary,
+            BaseSide = _preview.BaseSide,
+            Options = _preview.Options,
+            ElapsedMs = _preview.ElapsedMs,
+            SheetCount = _preview.SheetCount,
+        };
+    }
+
+    private void SetAllAiChecks(bool value)
+    {
+        foreach (var file in AiFiles)
+        {
+            file.IsChecked = value;
+        }
+
+        UpdateAiSummary();
+    }
+
+    private void UpdateAiSummary()
+    {
+        var checkedCount = AiFiles.Count(file => file.IsChecked);
+        AiSummaryText = AiFiles.Count == 0
+            ? "没有可交给 AI 的 Excel"
+            : $"共 {AiFiles.Count} 个，已勾选 {checkedCount} 个";
+    }
+
+    private string? ResolveRepoRoot()
+    {
+        foreach (var candidate in new[] { _driver?.RepoPath, _driver?.CurrentPath, _merged, _local, _remote, _base })
+        {
+            var repo = GitRunner.FindWorktreeRoot(candidate);
+            if (!string.IsNullOrWhiteSpace(repo))
+            {
+                return repo;
+            }
+        }
+
+        return null;
+    }
+
+    private string? CurrentWorktreePath(string repo)
+    {
+        foreach (var candidate in new[] { _driver?.CurrentPath, _merged, _local, _remote, _base })
+        {
+            var inside = PathInsideRepo(candidate, repo);
+            if (inside is not null)
+            {
+                return inside;
+            }
+        }
+
+        return null;
+    }
+
+    private string LaunchPathText() =>
+        "本地：" + SafeFullPath(_local) + Environment.NewLine +
+        "基准：" + SafeFullPath(_base) + Environment.NewLine +
+        "线上：" + SafeFullPath(_remote) + Environment.NewLine +
+        "输出：" + SafeFullPath(_merged);
+
+    private static string SidesText(RepoConflictExcel? source, bool launch)
+    {
+        if (launch || source is null)
+        {
+            return "本地 · 基准 · 线上";
+        }
+
+        return string.Join(" · ",
+            source.LocalBlob is null ? "无本地" : "本地",
+            source.BaseBlob is null ? "无基准" : "基准",
+            source.RemoteBlob is null ? "无线上" : "线上");
+    }
+
+    private static string? PathInsideRepo(string? path, string repo)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            var full = Path.GetFullPath(path);
+            var root = Path.GetFullPath(repo).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var prefix = root + Path.DirectorySeparatorChar;
+            return full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? full : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool SamePath(string left, string right)
+    {
+        try
+        {
+            return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string SafeFullPath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path);
+        }
+        catch
+        {
+            return path;
+        }
     }
 
     private static string FormatCommit(string title, GitCommitInfo? info)

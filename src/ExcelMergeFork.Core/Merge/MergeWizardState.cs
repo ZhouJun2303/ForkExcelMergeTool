@@ -17,6 +17,8 @@ public sealed class MergeWizardState
     public MergeSheetState? CurrentSheet =>
         _currentIndex >= 0 && _currentIndex < _sheets.Count ? _sheets[_currentIndex] : null;
     public bool CanGenerate => _sheets.Count > 0 && _sheets.All(sheet => sheet.IsCompleted);
+    public IReadOnlyList<string> UnconfirmedSheetNames =>
+        _sheets.Where(sheet => !sheet.IsCompleted).Select(sheet => sheet.Name).ToList();
     public IReadOnlyList<MergeChoice> Choices => _choices.Values.Select(CloneChoice).ToList();
 
     public void ApplyPreview(MergePreview preview, IReadOnlyList<string> orderedSheetNames)
