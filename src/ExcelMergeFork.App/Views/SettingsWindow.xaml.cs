@@ -15,6 +15,7 @@ namespace ExcelMergeFork.App.Views;
 public partial class SettingsWindow
 {
     private UserSettings _settings = AppSettingsStore.Load();
+    private bool _updateBusy;
 
     public SettingsWindow()
     {
@@ -150,32 +151,151 @@ public partial class SettingsWindow
     private void BuildUpdate()
     {
         AddTitle("程序更新", "检查 GitHub Releases。不会自动替换，必须确认后才更新。");
-        var state = new TextBlock { Text = $"当前版本 v{AppVersion.Display}", Margin = new Thickness(0, 12, 0, 12) };
-        var check = new Button { Content = "检查更新" };
-        check.Click += async (_, _) =>
+        var state = new TextBlock
         {
-            check.IsEnabled = false;
-            state.Text = "正在检查...";
+            Text = $"当前版本 v{AppVersion.Display}",
+            Margin = new Thickness(0, 12, 0, 12),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var check = new Button
+        {
+            Content = "检查更新",
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(16, 6, 16, 6),
+        };
+        check.Click += async (_, _) => await CheckForUpdateAsync(check, state);
+        PageHost.Children.Add(state);
+        PageHost.Children.Add(check);
+    }
+
+    private async Task CheckForUpdateAsync(Button check, TextBlock state)
+    {
+        if (_updateBusy)
+        {
+            return;
+        }
+
+        _updateBusy = true;
+        check.IsEnabled = false;
+        check.Content = "检查中...";
+        state.Text = "正在检查...";
+        AppLog.Info("点击检查更新");
+        try
+        {
+            UpdateInfo? info;
             try
             {
-                var info = await UpdateService.CheckAsync();
-                state.Text = info is null
-                    ? "未找到发布包"
-                    : info.IsNewer
-                        ? $"有新版本 {info.Tag}"
-                        : $"已是最新 {info.Tag}";
+                info = await UpdateService.CheckAsync();
             }
             catch (Exception ex)
             {
-                state.Text = "检查失败: " + ex.Message;
+                state.Text = "检查失败";
+                AppLog.Exception("检查更新失败", ex);
+                ShowUpdateDialog(ex.Message, "检查更新失败", MessageBoxImage.Error);
+                return;
             }
-            finally
+
+            if (info is null)
             {
-                check.IsEnabled = true;
+                state.Text = "未找到发布包";
+                ShowUpdateDialog("最新 Release 未找到 ExcelMergeFork.exe。", "检查更新", MessageBoxImage.Warning);
+                return;
             }
-        };
-        PageHost.Children.Add(state);
-        PageHost.Children.Add(check);
+
+            if (!info.IsNewer)
+            {
+                state.Text = $"已是最新 v{info.Version}";
+                ShowUpdateDialog($"当前已是最新版本 v{AppVersion.Display}。", "检查更新", MessageBoxImage.Information);
+                return;
+            }
+
+            state.Text = $"有新版本 v{info.Version}";
+            check.Content = $"有新版本 v{info.Version}";
+            var confirm = ShowUpdateDialog(
+                $"发现新版本 v{info.Version}，当前版本 v{AppVersion.Display}。\n\n"
+                + "点击确定后会下载新版 exe；下载完成后需要关闭当前窗口，工具会在退出后替换文件。\n"
+                + "如果正在合并冲突，建议先完成或取消当前合并后再更新。",
+                "发现新版本",
+                MessageBoxImage.Question,
+                MessageBoxButton.OKCancel);
+            if (confirm != MessageBoxResult.OK)
+            {
+                return;
+            }
+
+            var target = UpdateService.CurrentExecutable();
+            if (target is null)
+            {
+                ShowUpdateDialog("当前不是打包后的 ExcelMergeFork.exe，无法原地更新。", "更新提示", MessageBoxImage.Information);
+                return;
+            }
+
+            check.Content = "下载中...";
+            var progress = new Progress<UpdateProgress>(p => state.Text = p.Status);
+            string newExe;
+            try
+            {
+                newExe = await UpdateService.DownloadAsync(info, progress);
+            }
+            catch (Exception ex)
+            {
+                state.Text = "下载失败";
+                AppLog.Exception("下载更新失败", ex);
+                ShowUpdateDialog(ex.Message, "更新失败", MessageBoxImage.Error);
+                return;
+            }
+
+            PendingUpdate pending;
+            try
+            {
+                pending = UpdateService.PrepareApply(newExe, target);
+            }
+            catch (Exception ex)
+            {
+                state.Text = "更新失败";
+                AppLog.Exception("准备更新脚本失败", ex);
+                ShowUpdateDialog(ex.Message, "更新失败", MessageBoxImage.Error);
+                return;
+            }
+
+            state.Text = "下载完成，等待替换...";
+            ShowUpdateDialog(
+                "更新包已下载。点击确定后会关闭当前窗口，并自动替换 ExcelMergeFork.exe。",
+                "更新已准备好",
+                MessageBoxImage.Information);
+            try
+            {
+                UpdateService.LaunchApplyScript(pending);
+            }
+            catch (Exception ex)
+            {
+                state.Text = "更新失败";
+                AppLog.Exception("启动更新脚本失败", ex);
+                ShowUpdateDialog(ex.Message, "更新失败", MessageBoxImage.Error);
+                return;
+            }
+
+            System.Windows.Application.Current.Shutdown();
+        }
+        finally
+        {
+            _updateBusy = false;
+            if (check.Content as string == "检查中..." || check.Content as string == "下载中...")
+            {
+                check.Content = "检查更新";
+            }
+
+            check.IsEnabled = true;
+        }
+    }
+
+    private MessageBoxResult ShowUpdateDialog(
+        string message,
+        string title,
+        MessageBoxImage image,
+        MessageBoxButton buttons = MessageBoxButton.OK)
+    {
+        return System.Windows.MessageBox.Show(this, message, title, buttons, image);
     }
 
     private void AddTitle(string title, string subtitle)
