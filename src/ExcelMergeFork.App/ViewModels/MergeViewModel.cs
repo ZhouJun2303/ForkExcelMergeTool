@@ -4,6 +4,7 @@ using System.IO;
 using System.Windows.Data;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using ExcelMergeFork.App.Ui;
 using ExcelMergeFork.Core.Backup;
 using ExcelMergeFork.Core.Excel;
 using ExcelMergeFork.Core.Git;
@@ -20,6 +21,7 @@ public sealed partial class MergeViewModel : ObservableObject
     private readonly string _merged;
     private readonly GitDriverRequest? _driver;
     private readonly MergeWizardState _wizard = new();
+    private readonly UiDelay _searchDelay = new();
     private MergeSession? _session;
     private MergePreview? _preview;
     private List<PreviewRow> _allItems = [];
@@ -49,7 +51,7 @@ public sealed partial class MergeViewModel : ObservableObject
         UpdateWizardBindings();
     }
 
-    public ObservableCollection<PreviewRow> Items { get; } = [];
+    public RangeObservableCollection<PreviewRow> Items { get; } = [];
     public ObservableCollection<AiConflictPick> AiFiles { get; } = [];
     public ICollectionView ItemsView { get; }
 
@@ -85,7 +87,7 @@ public sealed partial class MergeViewModel : ObservableObject
     [ObservableProperty] private string _aiStatusText = "正在查找冲突 Excel...";
     [ObservableProperty] private bool _canUseAi = true;
 
-    partial void OnSearchTextChanged(string value) => ItemsView.Refresh();
+    partial void OnSearchTextChanged(string value) => _searchDelay.Schedule(() => ItemsView.Refresh());
     partial void OnBusyChanged(bool value)
     {
         CanUseAi = !value;
@@ -265,7 +267,11 @@ public sealed partial class MergeViewModel : ObservableObject
         return GitCompletion.StageAndCleanup(_merged, _local, _base, _remote);
     }
 
-    public void DisposeSession() => _session?.Dispose();
+    public void DisposeSession()
+    {
+        _searchDelay.Dispose();
+        _session?.Dispose();
+    }
 
     private void PersistAndRefresh()
     {
@@ -377,16 +383,11 @@ public sealed partial class MergeViewModel : ObservableObject
     private void RefreshCurrentSheet()
     {
         var sheet = _wizard.CurrentSheet?.Name;
-        Items.Clear();
-        if (sheet is not null)
-        {
-            foreach (var row in _allItems.Where(row => string.Equals(row.Sheet, sheet, StringComparison.Ordinal)))
-            {
-                Items.Add(row);
-            }
-        }
-
+        var rows = sheet is null
+            ? (IReadOnlyList<PreviewRow>)[]
+            : _allItems.Where(row => string.Equals(row.Sheet, sheet, StringComparison.Ordinal)).ToList();
         SelectedItem = null;
+        Items.Reset(rows);
         ItemsView.Refresh();
         UpdateWizardBindings();
     }

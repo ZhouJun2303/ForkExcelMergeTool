@@ -66,7 +66,9 @@ public class GitIntegrationTests
         Assert.Contains("ShowAndTrack(window", method, StringComparison.Ordinal);
         Assert.Contains("WindowCloseExitCode(window.WriteBackSucceeded)", method, StringComparison.Ordinal);
 
-        var startup = text[text.IndexOf("private void OnStartup", StringComparison.Ordinal)..];
+        var startupAt = text.IndexOf("void OnStartup", StringComparison.Ordinal);
+        Assert.True(startupAt >= 0, "missing OnStartup");
+        var startup = text[startupAt..];
         var explicitAt = startup.IndexOf("ShutdownMode = ShutdownMode.OnExplicitShutdown", StringComparison.Ordinal);
         var resolveAt = startup.IndexOf("ResolveFeature(", StringComparison.Ordinal);
         Assert.True(explicitAt >= 0, "OnStartup must set OnExplicitShutdown");

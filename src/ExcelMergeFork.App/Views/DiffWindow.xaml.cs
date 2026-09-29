@@ -13,6 +13,7 @@ public partial class DiffWindow
         _vm = new DiffViewModel(local, remote);
         DataContext = _vm;
         Loaded += async (_, _) => await _vm.LoadAsync();
+        Closed += (_, _) => _vm.Release();
     }
 
     private void OpenSettings(object sender, RoutedEventArgs e) => App.OpenSettings();

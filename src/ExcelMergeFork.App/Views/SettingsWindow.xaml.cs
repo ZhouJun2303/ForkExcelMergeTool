@@ -6,6 +6,7 @@ using ExcelMergeFork.Core;
 using ExcelMergeFork.Core.Backup;
 using ExcelMergeFork.Core.Git;
 using ExcelMergeFork.Core.Settings;
+using ExcelMergeFork.App.Ui;
 using ExcelMergeFork.Core.Update;
 using Microsoft.Win32;
 using Wpf.Ui.Appearance;
@@ -70,7 +71,12 @@ public partial class SettingsWindow
         AddRadio("合并对比模式", StartupFeature.MergeDiff, "打开完整三向合并或二向对比窗口。");
         AddRadio("每次询问", StartupFeature.AskEachTime, "每次先选择备份还是合并/对比。适合大表。");
         AddSeparator();
-        var dark = new CheckBox { Content = "深色主题", IsChecked = _settings.DarkTheme, Margin = new Thickness(0, 12, 0, 0) };
+        var dark = new Wpf.Ui.Controls.ToggleSwitch
+        {
+            Content = "深色主题",
+            IsChecked = _settings.DarkTheme,
+            Margin = new Thickness(0, 12, 0, 0),
+        };
         dark.Checked += (_, _) => SetTheme(true);
         dark.Unchecked += (_, _) => SetTheme(false);
         PageHost.Children.Add(dark);
@@ -85,7 +91,7 @@ public partial class SettingsWindow
             PlaceholderText = "留空则使用目标文件旁的 MergeExcelBackup",
             Margin = new Thickness(0, 12, 0, 8),
         };
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        var row = ButtonRow();
         var pick = MakeButton("选择目录");
         pick.Click += (_, _) =>
         {
@@ -98,11 +104,11 @@ public partial class SettingsWindow
             }
         };
         var save = MakeButton("保存", primary: true);
-        save.Click += (_, _) =>
+        save.Click += async (_, _) =>
         {
             _settings.BackupRootDir = box.Text.Trim();
             AppSettingsStore.Save(_settings);
-            System.Windows.MessageBox.Show("备份根目录已保存。");
+            await FluentPrompt.ShowInfoAsync(this, "备份根目录已保存。", "ExcelMergeFork");
         };
         var open = MakeButton("打开目录");
         open.Margin = new Thickness(8, 0, 0, 0);
@@ -124,7 +130,7 @@ public partial class SettingsWindow
         var status = ForkIntegration.Status();
         AddTitle("Fork 一键注入", "安装后，Fork 的 Merge Tool 和 External Diff Tool 会指向本工具。请先关闭 Fork。");
         PageHost.Children.Add(new TextBlock { Text = status.Detail, Margin = new Thickness(0, 12, 0, 12), TextWrapping = TextWrapping.Wrap });
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        var row = ButtonRow();
         var install = MakeButton("安装注入", primary: true);
         install.Click += (_, _) => { ForkIntegration.Install(); ShowPage("fork"); };
         var uninstall = MakeButton("移除注入");
@@ -142,7 +148,7 @@ public partial class SettingsWindow
         var status = GitIntegration.Status();
         AddTitle("全局 Git 注入", "安装后，任意 Git 工具遇到常见 Excel 后缀冲突都会调用本工具。");
         PageHost.Children.Add(new TextBlock { Text = status.Detail, Margin = new Thickness(0, 12, 0, 12), TextWrapping = TextWrapping.Wrap });
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        var row = ButtonRow();
         var install = MakeButton("安装注入", primary: true);
         install.Click += (_, _) => { GitIntegration.Install(); ShowPage("git"); };
         var uninstall = MakeButton("移除注入");
@@ -193,34 +199,33 @@ public partial class SettingsWindow
             {
                 state.Text = "检查失败";
                 AppLog.Exception("检查更新失败", ex);
-                ShowUpdateDialog(ex.Message, "检查更新失败", MessageBoxImage.Error);
+                await FluentPrompt.ShowInfoAsync(this, ex.Message, "检查更新失败");
                 return;
             }
 
             if (info is null)
             {
                 state.Text = "未找到发布包";
-                ShowUpdateDialog("最新 Release 未找到 ExcelMergeFork.exe。", "检查更新", MessageBoxImage.Warning);
+                await FluentPrompt.ShowInfoAsync(this, "最新 Release 未找到 ExcelMergeFork.exe。", "检查更新");
                 return;
             }
 
             if (!info.IsNewer)
             {
                 state.Text = $"已是最新 v{info.Version}";
-                ShowUpdateDialog($"当前已是最新版本 v{AppVersion.Display}。", "检查更新", MessageBoxImage.Information);
+                await FluentPrompt.ShowInfoAsync(this, $"当前已是最新版本 v{AppVersion.Display}。", "检查更新");
                 return;
             }
 
             state.Text = $"有新版本 v{info.Version}";
             check.Content = $"有新版本 v{info.Version}";
-            var confirm = ShowUpdateDialog(
+            var confirm = await FluentPrompt.ConfirmAsync(
+                this,
                 $"发现新版本 v{info.Version}，当前版本 v{AppVersion.Display}。\n\n"
                 + "点击确定后会下载新版 exe；下载完成后需要关闭当前窗口，工具会在退出后替换文件。\n"
                 + "如果正在合并冲突，建议先完成或取消当前合并后再更新。",
-                "发现新版本",
-                MessageBoxImage.Question,
-                MessageBoxButton.OKCancel);
-            if (confirm != MessageBoxResult.OK)
+                "发现新版本");
+            if (!confirm)
             {
                 return;
             }
@@ -228,7 +233,7 @@ public partial class SettingsWindow
             var target = UpdateService.CurrentExecutable();
             if (target is null)
             {
-                ShowUpdateDialog("当前不是打包后的 ExcelMergeFork.exe，无法原地更新。", "更新提示", MessageBoxImage.Information);
+                await FluentPrompt.ShowInfoAsync(this, "当前不是打包后的 ExcelMergeFork.exe，无法原地更新。", "更新提示");
                 return;
             }
 
@@ -243,7 +248,7 @@ public partial class SettingsWindow
             {
                 state.Text = "下载失败";
                 AppLog.Exception("下载更新失败", ex);
-                ShowUpdateDialog(ex.Message, "更新失败", MessageBoxImage.Error);
+                await FluentPrompt.ShowInfoAsync(this, ex.Message, "更新失败");
                 return;
             }
 
@@ -256,15 +261,15 @@ public partial class SettingsWindow
             {
                 state.Text = "更新失败";
                 AppLog.Exception("准备更新脚本失败", ex);
-                ShowUpdateDialog(ex.Message, "更新失败", MessageBoxImage.Error);
+                await FluentPrompt.ShowInfoAsync(this, ex.Message, "更新失败");
                 return;
             }
 
             state.Text = "下载完成，等待替换...";
-            ShowUpdateDialog(
+            await FluentPrompt.ShowInfoAsync(
+                this,
                 "更新包已下载。点击确定后会关闭当前窗口，并自动替换 ExcelMergeFork.exe。",
-                "更新已准备好",
-                MessageBoxImage.Information);
+                "更新已准备好");
             try
             {
                 UpdateService.LaunchApplyScript(pending);
@@ -273,7 +278,7 @@ public partial class SettingsWindow
             {
                 state.Text = "更新失败";
                 AppLog.Exception("启动更新脚本失败", ex);
-                ShowUpdateDialog(ex.Message, "更新失败", MessageBoxImage.Error);
+                await FluentPrompt.ShowInfoAsync(this, ex.Message, "更新失败");
                 return;
             }
 
@@ -289,15 +294,6 @@ public partial class SettingsWindow
 
             check.IsEnabled = true;
         }
-    }
-
-    private MessageBoxResult ShowUpdateDialog(
-        string message,
-        string title,
-        MessageBoxImage image,
-        MessageBoxButton buttons = MessageBoxButton.OK)
-    {
-        return System.Windows.MessageBox.Show(this, message, title, buttons, image);
     }
 
     private void AddTitle(string title, string subtitle)
@@ -335,15 +331,17 @@ public partial class SettingsWindow
     private void AddCopy(string label, string value)
     {
         PageHost.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 16, 0, 4), FontWeight = FontWeights.SemiBold });
-        var row = new DockPanel();
+        var row = new DockPanel { Margin = new Thickness(0, 0, 0, 4), LastChildFill = true };
         var copy = MakeButton("复制");
         copy.Margin = new Thickness(8, 0, 0, 0);
         DockPanel.SetDock(copy, Dock.Right);
         copy.Click += (_, _) => Clipboard.SetText(value);
         row.Children.Add(copy);
-        row.Children.Add(new Wpf.Ui.Controls.TextBox { Text = value, IsReadOnly = true });
+        row.Children.Add(new Wpf.Ui.Controls.TextBox { Text = value, IsReadOnly = true, MinWidth = 0 });
         PageHost.Children.Add(row);
     }
+
+    private static WrapPanel ButtonRow() => new();
 
     private static Wpf.Ui.Controls.Button MakeButton(string content, bool primary = false)
     {
@@ -353,7 +351,7 @@ public partial class SettingsWindow
             Appearance = primary
                 ? Wpf.Ui.Controls.ControlAppearance.Primary
                 : Wpf.Ui.Controls.ControlAppearance.Secondary,
-            Margin = new Thickness(0, 0, 8, 0),
+            Margin = new Thickness(0, 0, 8, 8),
             Padding = new Thickness(14, 6, 14, 6),
         };
     }

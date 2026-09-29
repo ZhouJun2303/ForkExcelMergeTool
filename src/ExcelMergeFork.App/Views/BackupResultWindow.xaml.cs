@@ -17,6 +17,8 @@ public partial class BackupResultWindow
         {
             Headline.Text = "备份失败";
             Detail.Text = error;
+            Detail.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "SystemFillColorCriticalBrush");
+            OpenButton.IsEnabled = false;
             return;
         }
 

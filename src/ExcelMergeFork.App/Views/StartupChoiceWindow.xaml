@@ -30,16 +30,39 @@
             <TextBlock x:Name="TitleText" FontSize="22" FontWeight="SemiBold"/>
             <TextBlock x:Name="NoticeText" Grid.Row="1" Opacity="0.75" TextWrapping="Wrap" Margin="0,8,0,12"/>
             <ui:DataGrid x:Name="FilesGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True"
-                         CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                         BorderThickness="0">
+                         CanUserAddRows="False" CanUserSortColumns="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                         BorderThickness="0" EnableRowVirtualization="True"
+                         VirtualizingPanel.IsVirtualizing="True"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.CanContentScroll="True">
                 <ui:DataGrid.Columns>
-                    <DataGridTextColumn Header="角色" Binding="{Binding Role}" Width="120"/>
-                    <DataGridTextColumn Header="文件" Binding="{Binding Name}" Width="220"/>
-                    <DataGridTextColumn Header="大小" Binding="{Binding Size}" Width="90"/>
-                    <DataGridTextColumn Header="路径" Binding="{Binding Path}" Width="*"/>
+                    <DataGridTextColumn Header="角色" Binding="{Binding Role}" Width="120">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}"/>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="文件" Binding="{Binding Name}" Width="180">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}">
+                                <Setter Property="ToolTip" Value="{Binding Name}"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="大小" Binding="{Binding Size}" Width="80">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}"/>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="路径" Binding="{Binding Path}" Width="*">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}">
+                                <Setter Property="ToolTip" Value="{Binding Path}"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
                 </ui:DataGrid.Columns>
             </ui:DataGrid>
-            <TextBlock x:Name="WarnText" Grid.Row="3" Foreground="#B91C1C" TextWrapping="Wrap" Margin="0,12,0,0"/>
+            <TextBlock x:Name="WarnText" Grid.Row="3" Foreground="{DynamicResource SystemFillColorCriticalBrush}" TextWrapping="Wrap" Margin="0,12,0,0"/>
         </Grid>
         <Border Grid.Row="2" Padding="20,12" BorderThickness="0,1,0,0"
                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">

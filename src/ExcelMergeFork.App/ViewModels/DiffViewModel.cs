@@ -4,6 +4,7 @@ using System.Windows.Data;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using ExcelMergeFork.App.Ui;
 using ExcelMergeFork.Core.Compare;
 using ExcelMergeFork.Core.Settings;
 
@@ -24,6 +25,7 @@ public sealed partial class DiffViewModel : ObservableObject
     private int _elapsedMs;
     private bool _suppress;
     private bool _ready;
+    private readonly UiDelay _searchDelay = new();
     private readonly UserSettings _settings = AppSettingsStore.Load();
 
     public DiffViewModel(string local, string remote)
@@ -48,7 +50,7 @@ public sealed partial class DiffViewModel : ObservableObject
         ShowEmpty = true;
     }
 
-    public ObservableCollection<DiffListItem> Items { get; } = [];
+    public RangeObservableCollection<DiffListItem> Items { get; } = [];
     public ObservableCollection<SheetOption> Sheets { get; } = [];
     public ICollectionView ItemsView { get; }
 
@@ -87,7 +89,9 @@ public sealed partial class DiffViewModel : ObservableObject
     partial void OnSelectedItemChanged(DiffListItem? value) => HasSelection = value is not null;
     partial void OnAutoOpenChanged(bool value) => PersistFilter();
     partial void OnShowAllCellsChanged(bool value) => OnPropertyChanged(nameof(DetailCells));
-    partial void OnSearchTextChanged(string value) => RefreshItems();
+    partial void OnSearchTextChanged(string value) => _searchDelay.Schedule(RefreshItems);
+
+    public void Release() => _searchDelay.Dispose();
     partial void OnSelectedSheetChanged(SheetOption? value) => RefreshItems();
     partial void OnShowAddedChanged(bool value) { PersistFilter(); RefreshItems(); }
     partial void OnShowDeletedChanged(bool value) { PersistFilter(); RefreshItems(); }
@@ -110,12 +114,19 @@ public sealed partial class DiffViewModel : ObservableObject
             // 左边是线上，右边是本地。界面上的「本地 / 线上」按这个方向显示。
             _result = await Task.Run(() => CompareEngine.Compute(remote, local));
             _elapsedMs = _result.ElapsedMs;
-            Items.Clear();
-            SelectedItem = null;
-            foreach (var row in _result.Rows)
+            var rows = _result.Rows;
+            var built = await Task.Run(() =>
             {
-                Items.Add(new DiffListItem(row, NewBg, NewFg, DeleteBg, DeleteFg, ModifyBg, ModifyFg));
-            }
+                var list = new List<DiffListItem>(rows.Count);
+                foreach (var row in rows)
+                {
+                    list.Add(new DiffListItem(row, NewBg, NewFg, DeleteBg, DeleteFg, ModifyBg, ModifyFg));
+                }
+
+                return list;
+            });
+            SelectedItem = null;
+            Items.Reset(built);
 
             BuildSheets();
             ShowSkipped = _result.SkippedSheetNames.Count > 0;
@@ -228,11 +239,7 @@ public sealed partial class DiffViewModel : ObservableObject
         var scoped = sheet is null
             ? _result.Rows.Count
             : _result.Rows.Count(row => row.Sheet == sheet);
-        var shown = 0;
-        foreach (var _ in ItemsView)
-        {
-            shown++;
-        }
+        var shown = ItemsView is CollectionView collection ? collection.Count : ItemsView.Cast<object>().Count();
 
         var scopeName = sheet ?? "全部工作表";
         StatusText = $"{scopeName}：{scoped} 处差异，当前显示 {shown} 处。全部 {_result.Rows.Count} 处，耗时 {_elapsedMs} ms";

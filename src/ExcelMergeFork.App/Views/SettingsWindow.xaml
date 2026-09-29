@@ -43,8 +43,8 @@
                     </ListBox>
                 </DockPanel>
             </Border>
-            <ScrollViewer Grid.Column="1" Padding="28,16,28,24">
-                <StackPanel x:Name="PageHost" MaxWidth="720" HorizontalAlignment="Left"/>
+            <ScrollViewer Grid.Column="1" Padding="28,16,28,24" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="PageHost" MaxWidth="720" HorizontalAlignment="Stretch"/>
             </ScrollViewer>
         </Grid>
     </Grid>

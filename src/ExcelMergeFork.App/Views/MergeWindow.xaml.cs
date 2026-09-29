@@ -1,4 +1,5 @@
 using System.Windows;
+using ExcelMergeFork.App.Ui;
 using ExcelMergeFork.App.ViewModels;
 using ExcelMergeFork.Core.Git;
 
@@ -82,19 +83,17 @@ public partial class MergeWindow
                 ? "没有可确认的 Sheet。"
                 : "以下 Sheet 尚未确认：\n" + string.Join("\n", pending);
             _vm.StatusText = "请先确认全部 Sheet。";
-            MessageBox.Show(
+            await FluentPrompt.ShowInfoAsync(
                 this,
                 detail + "\n\n请先对每个 Sheet 点击“确认本 Sheet”，再生成合并结果。",
-                "ExcelMergeFork",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+                "ExcelMergeFork");
             return;
         }
 
         await _vm.GenerateCommand.ExecuteAsync(null);
     }
 
-    private void OnConfirm(object sender, RoutedEventArgs e)
+    private async void OnConfirm(object sender, RoutedEventArgs e)
     {
         var result = _vm.Confirm();
         if (result.Success)
@@ -104,11 +103,17 @@ public partial class MergeWindow
                 WriteBackSucceeded = true;
             }
 
-            MessageBox.Show(string.IsNullOrWhiteSpace(result.Message) ? "冲突已解决。" : result.Message, "ExcelMergeFork");
+            await FluentPrompt.ShowInfoAsync(
+                this,
+                string.IsNullOrWhiteSpace(result.Message) ? "冲突已解决。" : result.Message,
+                "ExcelMergeFork");
             Close();
             return;
         }
 
-        MessageBox.Show(string.Join(Environment.NewLine, result.Errors.DefaultIfEmpty("确认失败")), "ExcelMergeFork");
+        await FluentPrompt.ShowInfoAsync(
+            this,
+            string.Join(Environment.NewLine, result.Errors.DefaultIfEmpty("确认失败")),
+            "ExcelMergeFork");
     }
 }

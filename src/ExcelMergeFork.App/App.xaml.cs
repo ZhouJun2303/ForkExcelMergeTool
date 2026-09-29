@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Windows;
 using System.Windows.Threading;
+using ExcelMergeFork.App.Ui;
 using ExcelMergeFork.App.Views;
 using ExcelMergeFork.Core;
 using ExcelMergeFork.Core.Backup;
@@ -16,7 +17,7 @@ public partial class App : System.Windows.Application
 {
     private int _pendingExitCode;
 
-    private void OnStartup(object sender, StartupEventArgs e)
+    private async void OnStartup(object sender, StartupEventArgs e)
     {
         // Choice dialogs close before the work window is shown. OnLastWindowClose
         // would kill the process in that gap, so every launch uses explicit shutdown.
@@ -35,32 +36,32 @@ public partial class App : System.Windows.Application
                     ShowAndTrack(new SettingsWindow());
                     break;
                 case LaunchMode.InstallFork:
-                    ShowStatus("Fork 注入", ForkIntegration.Install(request.Files.FirstOrDefault()).Detail);
+                    await FluentPrompt.ShowInfoAsync(null, ForkIntegration.Install(request.Files.FirstOrDefault()).Detail, "Fork 注入");
                     Shutdown(0);
                     break;
                 case LaunchMode.UninstallFork:
-                    ShowStatus("Fork 注入", ForkIntegration.Uninstall(request.Files.FirstOrDefault()).Detail);
+                    await FluentPrompt.ShowInfoAsync(null, ForkIntegration.Uninstall(request.Files.FirstOrDefault()).Detail, "Fork 注入");
                     Shutdown(0);
                     break;
                 case LaunchMode.InstallGit:
-                    ShowStatus("Git 注入", GitIntegration.Install(request.Files.FirstOrDefault()).Detail);
+                    await FluentPrompt.ShowInfoAsync(null, GitIntegration.Install(request.Files.FirstOrDefault()).Detail, "Git 注入");
                     Shutdown(0);
                     break;
                 case LaunchMode.UninstallGit:
-                    ShowStatus("Git 注入", GitIntegration.Uninstall().Detail);
+                    await FluentPrompt.ShowInfoAsync(null, GitIntegration.Uninstall().Detail, "Git 注入");
                     Shutdown(0);
                     break;
                 case LaunchMode.GitDriver:
                     StartGitDriver(request);
                     break;
                 case LaunchMode.Merge:
-                    StartMerge(request);
+                    await StartMergeAsync(request);
                     break;
                 case LaunchMode.Compare:
                     StartCompare(request);
                     break;
                 default:
-                    MessageBox.Show("参数无法识别。请从 Fork 打开，或直接双击进入设置中心。", "ExcelMergeFork");
+                    await FluentPrompt.ShowInfoAsync(null, "参数无法识别。请从 Fork 打开，或直接双击进入设置中心。", "ExcelMergeFork");
                     ShowAndTrack(new SettingsWindow());
                     break;
             }
@@ -68,12 +69,12 @@ public partial class App : System.Windows.Application
         catch (Exception ex)
         {
             AppLog.Exception("启动失败", ex);
-            MessageBox.Show(ex.Message, "ExcelMergeFork");
+            await FluentPrompt.ShowInfoAsync(null, ex.Message, "ExcelMergeFork");
             Shutdown(1);
         }
     }
 
-    private void StartMerge(LaunchRequest request)
+    private async Task StartMergeAsync(LaunchRequest request)
     {
         var files = new[] { request.Local, request.Base, request.Remote, request.Merged };
         if (files.Any(string.IsNullOrWhiteSpace))
@@ -106,7 +107,8 @@ public partial class App : System.Windows.Application
 
         if (LaunchArgs.UnsupportedMergeDiff(files!).Count > 0)
         {
-            MessageBox.Show(
+            await FluentPrompt.ShowInfoAsync(
+                null,
                 "合并对比模式当前只支持 " + ExcelFormats.MergeDiffExtensionText + "。宏文件请改用快速备份。",
                 "ExcelMergeFork");
             Shutdown(1);
@@ -208,7 +210,7 @@ public partial class App : System.Windows.Application
         return dialog.Choice;
     }
 
-    public static void OpenSettings()
+    public static async void OpenSettings()
     {
         try
         {
@@ -227,7 +229,8 @@ public partial class App : System.Windows.Application
         catch (Exception ex)
         {
             AppLog.Exception("打开设置中心失败", ex);
-            MessageBox.Show(ex.Message, "ExcelMergeFork");
+            var owner = Current.Windows.OfType<Window>().FirstOrDefault(window => window.IsActive);
+            await FluentPrompt.ShowInfoAsync(owner, ex.Message, "ExcelMergeFork");
         }
     }
 
@@ -251,10 +254,5 @@ public partial class App : System.Windows.Application
         };
         window.Show();
         window.Activate();
-    }
-
-    private static void ShowStatus(string title, string detail)
-    {
-        MessageBox.Show(detail, title);
     }
 }
