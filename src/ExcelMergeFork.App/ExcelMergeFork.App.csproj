@@ -8,8 +8,8 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>ExcelMergeFork</AssemblyName>
     <RootNamespace>ExcelMergeFork.App</RootNamespace>
-    <Version>3.2.0</Version>
-    <InformationalVersion>3.2</InformationalVersion>
+    <Version>3.3.0</Version>
+    <InformationalVersion>3.3</InformationalVersion>
     <ApplicationIcon>..\..\Assets\ExcelMergeFork.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
@@ -29,5 +29,6 @@
   </ItemGroup>
 
 </Project>
+
 
 
