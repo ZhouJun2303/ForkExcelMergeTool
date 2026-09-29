@@ -30,6 +30,43 @@ public class MergeWizardStateTests
     }
 
     [Fact]
+    public void UnchangedSheetsAreOmittedFromConfirmation()
+    {
+        var state = new MergeWizardState();
+        state.ApplyPreview(Preview(
+            new MergeChoice { Sheet = "Main", Key = "id-1", Kind = ConflictKind.Row },
+            new PreviewItem { Sheet = "Main", Key = "id-1 (修改冲突)", Action = "将保留本地", Tag = PreviewTag.Conflict, ConflictIndex = 0 }),
+            ["Main", "Untouched", "AlsoEmpty"]);
+
+        Assert.Equal("Main", Assert.Single(state.Sheets).Name);
+        Assert.Equal(["Main"], state.UnconfirmedSheetNames);
+        Assert.False(state.CanGenerate);
+
+        Assert.True(state.TryCompleteCurrentSheet());
+        Assert.True(state.CanGenerate);
+        Assert.Empty(state.UnconfirmedSheetNames);
+    }
+
+    [Fact]
+    public void AllUnchangedSheetsAllowGenerateWithoutConfirmation()
+    {
+        var state = new MergeWizardState();
+        state.ApplyPreview(new MergePreview
+        {
+            Items = [],
+            ConflictEntries = [],
+            Summary = new PreviewSummary(),
+            BaseSide = "local",
+            Options = [],
+        }, ["A", "B"]);
+
+        Assert.Empty(state.Sheets);
+        Assert.Empty(state.UnconfirmedSheetNames);
+        Assert.True(state.CanGenerate);
+        Assert.Null(state.CurrentSheet);
+    }
+
+    [Fact]
     public void ChoicesAreRetainedAcrossSheets_AndAffectedCompletionResets()
     {
         var first = Preview(
@@ -59,7 +96,7 @@ public class MergeWizardStateTests
         state.ApplyPreview(changed, ["Main", "Extra"]);
 
         Assert.False(state.Sheets.Single(sheet => sheet.Name == "Main").IsCompleted);
-        Assert.False(state.Sheets.Single(sheet => sheet.Name == "Extra").IsCompleted);
+        Assert.DoesNotContain(state.Sheets, sheet => sheet.Name == "Extra");
         Assert.DoesNotContain(state.Choices, choice => choice.Sheet == "Extra");
         Assert.Equal(2, state.Choices.Count(choice => choice.Sheet == "Main"));
         Assert.Equal("remote", state.Choices.Single(choice => choice.Key == "id-1").Choice);

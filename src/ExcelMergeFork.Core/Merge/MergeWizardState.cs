@@ -16,7 +16,7 @@ public sealed class MergeWizardState
     public int CurrentIndex => _currentIndex;
     public MergeSheetState? CurrentSheet =>
         _currentIndex >= 0 && _currentIndex < _sheets.Count ? _sheets[_currentIndex] : null;
-    public bool CanGenerate => _sheets.Count > 0 && _sheets.All(sheet => sheet.IsCompleted);
+    public bool CanGenerate => _sheets.All(sheet => sheet.IsCompleted);
     public IReadOnlyList<string> UnconfirmedSheetNames =>
         _sheets.Where(sheet => !sheet.IsCompleted).Select(sheet => sheet.Name).ToList();
     public IReadOnlyList<MergeChoice> Choices => _choices.Values.Select(CloneChoice).ToList();
@@ -44,6 +44,11 @@ public sealed class MergeWizardState
         _signatures.Clear();
         foreach (var sheetName in orderedSheetNames.Distinct(StringComparer.Ordinal))
         {
+            if (!SheetNeedsConfirmation(sheetName, preview))
+            {
+                continue;
+            }
+
             var selectable = preview.ConflictEntries
                 .Where(choice => string.Equals(choice.Sheet, sheetName, StringComparison.Ordinal))
                 .Select(choice => choice.ChoiceKey)
@@ -139,6 +144,10 @@ public sealed class MergeWizardState
         _currentIndex++;
         return true;
     }
+
+    private static bool SheetNeedsConfirmation(string sheetName, MergePreview preview) =>
+        preview.Items.Any(item => string.Equals(item.Sheet, sheetName, StringComparison.Ordinal)) ||
+        preview.ConflictEntries.Any(choice => string.Equals(choice.Sheet, sheetName, StringComparison.Ordinal));
 
     private static string BuildSignature(
         string sheetName,

@@ -394,7 +394,7 @@ public sealed partial class MergeViewModel : ObservableObject
     private void UpdateWizardBindings()
     {
         var current = _wizard.CurrentSheet;
-        CurrentSheetName = current?.Name ?? "无可处理 Sheet";
+        CurrentSheetName = current?.Name ?? "没有需要确认的 Sheet";
         SheetProgressText = _wizard.Sheets.Count == 0
             ? "0/0"
             : $"{_wizard.CurrentIndex + 1}/{_wizard.Sheets.Count}";
