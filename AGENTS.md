@@ -23,3 +23,5 @@ No pytest. Use `dotnet test` and existing `TestData/mode_*.xlsx`. Do not overwri
 
 ## Commits
 Conventional prefixes: `feat:`, `fix:`. PRs should list `dotnet test` and mention merge modes if behavior changes.
+
+每次做完修改都提交。一项改动完成后就创建 git commit，不要把做完的改动留在工作区。只提交这次改动相关的文件，说明为什么改。除非用户要求，不要 push。
