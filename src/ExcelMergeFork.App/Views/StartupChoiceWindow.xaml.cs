@@ -3,10 +3,11 @@ using System.Windows;
 using ExcelMergeFork.Core;
 using ExcelMergeFork.Core.Excel;
 using ExcelMergeFork.Core.Settings;
+using Wpf.Ui.Controls;
 
 namespace ExcelMergeFork.App.Views;
 
-public partial class StartupChoiceWindow : Window
+public partial class StartupChoiceWindow : FluentWindow
 {
     public string? Choice { get; private set; }
 

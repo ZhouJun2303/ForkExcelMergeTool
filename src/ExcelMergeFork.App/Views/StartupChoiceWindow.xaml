@@ -1,36 +1,53 @@
-<Window x:Class="ExcelMergeFork.App.Views.StartupChoiceWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="选择运行模式"
-        Icon="pack://application:,,,/Assets/ExcelMergeFork.ico"
-        Width="760" Height="560"
-        MinWidth="640" MinHeight="420"
-        WindowStartupLocation="CenterScreen"
-        Background="#F4F7FB">
-    <Grid Margin="0">
+<ui:FluentWindow x:Class="ExcelMergeFork.App.Views.StartupChoiceWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="选择运行模式"
+                 Icon="pack://application:,,,/Assets/ExcelMergeFork.ico"
+                 Width="820" Height="560"
+                 MinWidth="680" MinHeight="460"
+                 WindowStartupLocation="CenterScreen"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica">
+    <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <StackPanel Grid.Row="0" Margin="24">
+        <ui:TitleBar Title="选择运行模式">
+            <ui:TitleBar.Icon>
+                <ui:ImageIcon Source="pack://application:,,,/Assets/app_32.png"/>
+            </ui:TitleBar.Icon>
+        </ui:TitleBar>
+        <Grid Grid.Row="1" Margin="20,8,20,8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
             <TextBlock x:Name="TitleText" FontSize="22" FontWeight="SemiBold"/>
-            <TextBlock x:Name="NoticeText" Opacity="0.75" TextWrapping="Wrap" Margin="0,8,0,16"/>
-            <DataGrid x:Name="FilesGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" Height="220">
-                <DataGrid.Columns>
+            <TextBlock x:Name="NoticeText" Grid.Row="1" Opacity="0.75" TextWrapping="Wrap" Margin="0,8,0,12"/>
+            <ui:DataGrid x:Name="FilesGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True"
+                         CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                         BorderThickness="0">
+                <ui:DataGrid.Columns>
                     <DataGridTextColumn Header="角色" Binding="{Binding Role}" Width="120"/>
-                    <DataGridTextColumn Header="文件" Binding="{Binding Name}" Width="180"/>
+                    <DataGridTextColumn Header="文件" Binding="{Binding Name}" Width="220"/>
                     <DataGridTextColumn Header="大小" Binding="{Binding Size}" Width="90"/>
                     <DataGridTextColumn Header="路径" Binding="{Binding Path}" Width="*"/>
-                </DataGrid.Columns>
-            </DataGrid>
-            <TextBlock x:Name="WarnText" Foreground="#B91C1C" TextWrapping="Wrap" Margin="0,12,0,0"/>
-        </StackPanel>
-        <Border Grid.Row="1" Padding="20,12" Background="White" BorderBrush="#E5E7EB" BorderThickness="0,1,0,0">
+                </ui:DataGrid.Columns>
+            </ui:DataGrid>
+            <TextBlock x:Name="WarnText" Grid.Row="3" Foreground="#B91C1C" TextWrapping="Wrap" Margin="0,12,0,0"/>
+        </Grid>
+        <Border Grid.Row="2" Padding="20,12" BorderThickness="0,1,0,0"
+                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
             <DockPanel LastChildFill="False">
-                <Button DockPanel.Dock="Left" Content="取消" Click="OnCancel" Padding="16,8" MinWidth="88"/>
-                <Button DockPanel.Dock="Right" Content="进入合并/对比" x:Name="MergeButton" Click="OnMerge" Padding="16,8" MinWidth="120" Margin="8,0,0,0"/>
-                <Button DockPanel.Dock="Right" Content="快速备份" Click="OnBackup" Padding="16,8" MinWidth="100"/>
+                <ui:Button DockPanel.Dock="Left" Appearance="Secondary" Content="取消" Click="OnCancel" MinWidth="88"/>
+                <ui:Button DockPanel.Dock="Right" Appearance="Primary" Content="进入合并/对比" x:Name="MergeButton" Click="OnMerge" MinWidth="140" Margin="8,0,0,0"/>
+                <ui:Button DockPanel.Dock="Right" Appearance="Secondary" Content="快速备份" Click="OnBackup" MinWidth="110"/>
             </DockPanel>
         </Border>
     </Grid>
-</Window>
+</ui:FluentWindow>

@@ -30,7 +30,11 @@ public class CompareEngineTests
 
             var result = CompareEngine.Compute(left, right);
             Assert.False(File.Exists(result.OutputPath), "Compute 不得写出对比工作簿");
-            Assert.Contains(result.Rows, r => r.Status == "修改" && r.Key == "changed");
+            var changed = Assert.Single(result.Rows, r => r.Status == "修改" && r.Key == "changed");
+            var value = Assert.Single(changed.Cells, c => c.Header == "V");
+            Assert.True(value.Changed);
+            Assert.Equal("old", value.Left);
+            Assert.Equal("new", value.Right);
             Assert.Contains(result.Rows, r => r.Status == "新增行" && r.Key == "fresh");
             Assert.Contains(result.Rows, r => r.Status == "删除行" && r.Key == "gone");
             Assert.Contains(result.Rows, r => r.Status == "新增列" && r.Right.Contains("OnlyB"));
@@ -44,6 +48,70 @@ public class CompareEngineTests
             AssertFill(ws, "fresh", AppConstants.ColorNew);
             AssertFill(ws, "gone", AppConstants.ColorConflict);
             AssertFill(ws, "changed", AppConstants.ColorChanged);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void Compute_DuplicateKeys_KeepsEarlierChangeAndExtraCopy()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "emf-compare-dup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var left = Path.Combine(dir, "left.xlsx");
+            var right = Path.Combine(dir, "right.xlsx");
+            Write(left, [
+                ["Key", "V"],
+                ["dup", "old"],
+                ["dup", "new"],
+            ]);
+            Write(right, [
+                ["Key", "V"],
+                ["dup", "new"],
+            ]);
+
+            var result = CompareEngine.Compute(left, right);
+            var modified = Assert.Single(result.Rows, r => r.Status == "修改");
+            Assert.Equal("dup", modified.Key);
+            Assert.Equal(2, modified.LeftRow);
+            Assert.Equal(2, modified.RightRow);
+            Assert.Contains(modified.Cells, c => c.Changed && c.Header == "V" && c.Left == "old" && c.Right == "new");
+
+            var extra = Assert.Single(result.Rows, r => r.Status == "删除行");
+            Assert.Equal("dup #2", extra.Key);
+            Assert.Equal(3, extra.LeftRow);
+            Assert.Equal(0, extra.RightRow);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void Compute_IdenticalDuplicateKeys_AreNotDiffs()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "emf-compare-same-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var left = Path.Combine(dir, "left.xlsx");
+            var right = Path.Combine(dir, "right.xlsx");
+            var rows = new[]
+            {
+                new[] { "Key", "V" },
+                new[] { "dup", "one" },
+                new[] { "dup", "two" },
+            };
+            Write(left, rows);
+            Write(right, rows);
+
+            var result = CompareEngine.Compute(left, right);
+            Assert.Empty(result.Rows);
         }
         finally
         {

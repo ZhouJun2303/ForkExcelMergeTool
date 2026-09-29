@@ -3,8 +3,8 @@
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  Title="Excel 二向对比"
-                 Width="1200" Height="760"
-                 MinWidth="900" MinHeight="560"
+                 Width="1280" Height="840"
+                 MinWidth="1040" MinHeight="640"
                  Icon="pack://application:,,,/Assets/ExcelMergeFork.ico"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica">
@@ -12,9 +12,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="200"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <ui:TitleBar Title="Excel 二向对比">
@@ -22,65 +20,273 @@
                 <ui:ImageIcon Source="pack://application:,,,/Assets/app_32.png"/>
             </ui:TitleBar.Icon>
         </ui:TitleBar>
+
         <DockPanel Grid.Row="1" Margin="20,8,20,0">
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                <Button Content="互换基准" Command="{Binding SwapCommand}" Margin="0,0,8,0" Padding="12,6"/>
-                <Button Content="设置中心" Click="OpenSettings" Padding="12,6"/>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                <ui:Button Appearance="Secondary" Content="互换基准" Command="{Binding SwapCommand}" Margin="0,0,8,0">
+                    <ui:Button.Icon>
+                        <ui:SymbolIcon Symbol="ArrowSwap24"/>
+                    </ui:Button.Icon>
+                </ui:Button>
+                <ui:Button Appearance="Secondary" Content="设置中心" Click="OpenSettings">
+                    <ui:Button.Icon>
+                        <ui:SymbolIcon Symbol="Settings24"/>
+                    </ui:Button.Icon>
+                </ui:Button>
             </StackPanel>
             <StackPanel>
-                <TextBlock Text="{Binding Title}" FontSize="22" FontWeight="SemiBold"/>
-                <TextBlock Text="{Binding PathRemote}" Opacity="0.7" Margin="0,4,0,0"/>
-                <TextBlock Text="{Binding PathLocal}" Opacity="0.7"/>
+                <TextBlock Text="本地 对比 线上" FontSize="22" FontWeight="SemiBold"/>
+                <TextBlock Text="在左侧选择工作表，逐张查看差异。重复的主键会按出现顺序逐条对比。"
+                           Opacity="0.7" Margin="0,4,0,0" TextWrapping="Wrap"/>
             </StackPanel>
         </DockPanel>
-        <WrapPanel Grid.Row="2" Margin="20,12,20,8">
-            <CheckBox Content="新增行" IsChecked="{Binding ShowAdded}" Margin="0,0,12,0"/>
-            <CheckBox Content="删除行" IsChecked="{Binding ShowDeleted}" Margin="0,0,12,0"/>
-            <CheckBox Content="新增列" IsChecked="{Binding ShowNewCols}" Margin="0,0,12,0"/>
-            <CheckBox Content="删除列" IsChecked="{Binding ShowDelCols}" Margin="0,0,12,0"/>
-            <CheckBox Content="修改" IsChecked="{Binding ShowModified}" Margin="0,0,16,0"/>
-            <TextBox Width="260" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
-        </WrapPanel>
-        <ListView Grid.Row="3" Margin="20,0,20,8" ItemsSource="{Binding ItemsView}" SelectedItem="{Binding SelectedItem}"
-                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" BorderThickness="0">
-            <ListView.ItemTemplate>
-                <DataTemplate>
-                    <Grid Margin="0,4">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="88"/>
-                            <ColumnDefinition Width="150"/>
-                            <ColumnDefinition Width="180"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="{Binding Status}" FontWeight="SemiBold"/>
-                        <TextBlock Grid.Column="1" Text="{Binding Sheet}"/>
-                        <TextBlock Grid.Column="2" Text="{Binding Key}" TextTrimming="CharacterEllipsis"/>
-                        <TextBlock Grid.Column="3" Text="{Binding Left}" Opacity="0.75" TextTrimming="CharacterEllipsis" Margin="8,0"/>
-                        <TextBlock Grid.Column="4" Text="{Binding Right}" Opacity="0.75" TextTrimming="CharacterEllipsis"/>
-                    </Grid>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
-        <Grid Grid.Row="4" Margin="20,0,20,8">
+
+        <Grid Grid.Row="2" Margin="20,12,20,8">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition/>
-                <ColumnDefinition/>
+                <ColumnDefinition Width="248"/>
+                <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <GroupBox Header="A" Margin="0,0,6,0">
-                <ItemsControl ItemsSource="{Binding SelectedItem.LeftValues}"/>
-            </GroupBox>
-            <GroupBox Header="B" Margin="6,0,0,0">
-                <ItemsControl ItemsSource="{Binding SelectedItem.RightValues}"/>
-            </GroupBox>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <UniformGrid Grid.ColumnSpan="2" Columns="2" Margin="0,0,0,12">
+                <Border Margin="0,0,6,0" Padding="14,10" CornerRadius="8" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel>
+                        <TextBlock Text="本地" FontSize="12" Opacity="0.65"/>
+                        <TextBlock Text="{Binding FileLocal}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                        <TextBlock Text="{Binding PathLocal}" FontSize="12" Opacity="0.6" TextTrimming="CharacterEllipsis" ToolTip="{Binding PathLocal}"/>
+                    </StackPanel>
+                </Border>
+                <Border Margin="6,0,0,0" Padding="14,10" CornerRadius="8" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel>
+                        <TextBlock Text="线上" FontSize="12" Opacity="0.65"/>
+                        <TextBlock Text="{Binding FileRemote}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                        <TextBlock Text="{Binding PathRemote}" FontSize="12" Opacity="0.6" TextTrimming="CharacterEllipsis" ToolTip="{Binding PathRemote}"/>
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
+            <Border Grid.Row="1" Grid.Column="0" CornerRadius="8" Padding="8" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="工作表" FontWeight="SemiBold" Margin="8,6,8,8"/>
+                    <TextBlock DockPanel.Dock="Bottom" Text="{Binding SkippedHint}" TextWrapping="Wrap" FontSize="12" Opacity="0.7" Margin="8,8,8,4">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowSkipped}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ListBox ItemsSource="{Binding Sheets}" SelectedItem="{Binding SelectedSheet}"
+                             BorderThickness="0" Background="Transparent"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="Padding" Value="8,8"/>
+                                <Setter Property="Margin" Value="0,1"/>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <DockPanel>
+                                    <Border DockPanel.Dock="Right" CornerRadius="8" Padding="8,2" Margin="8,0,0,0"
+                                            Background="{DynamicResource ControlFillColorDefaultBrush}" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Badge}" FontSize="12"/>
+                                    </Border>
+                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+
+            <Grid Grid.Row="1" Grid.Column="1" Margin="12,0,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="248"/>
+                </Grid.RowDefinitions>
+                <Border Padding="12,10" CornerRadius="8" Margin="0,0,0,8" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                    <DockPanel>
+                        <ui:TextBox DockPanel.Dock="Right" Width="280" Margin="12,0,0,0"
+                                    PlaceholderText="搜索键、工作表或单元格"
+                                    Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}">
+                            <ui:TextBox.Icon>
+                                <ui:SymbolIcon Symbol="Search24"/>
+                            </ui:TextBox.Icon>
+                        </ui:TextBox>
+                        <WrapPanel VerticalAlignment="Center">
+                            <CheckBox Content="新增行" IsChecked="{Binding ShowAdded}" Margin="0,4,14,4"/>
+                            <CheckBox Content="删除行" IsChecked="{Binding ShowDeleted}" Margin="0,4,14,4"/>
+                            <CheckBox Content="新增列" IsChecked="{Binding ShowNewCols}" Margin="0,4,14,4"/>
+                            <CheckBox Content="删除列" IsChecked="{Binding ShowDelCols}" Margin="0,4,14,4"/>
+                            <CheckBox Content="修改" IsChecked="{Binding ShowModified}" Margin="0,4,0,4"/>
+                        </WrapPanel>
+                    </DockPanel>
+                </Border>
+
+                <Grid Grid.Row="1">
+                    <ui:DataGrid ItemsSource="{Binding ItemsView}"
+                                 SelectedItem="{Binding SelectedItem}"
+                                 AutoGenerateColumns="False"
+                                 CanUserAddRows="False"
+                                 CanUserDeleteRows="False"
+                                 IsReadOnly="True"
+                                 HeadersVisibility="Column"
+                                 GridLinesVisibility="Horizontal"
+                                 BorderThickness="0"
+                                 SelectionMode="Single"
+                                 SelectionUnit="FullRow"
+                                 EnableRowVirtualization="True"
+                                 VirtualizingPanel.IsVirtualizing="True"
+                                 RowHeight="40">
+                        <ui:DataGrid.Columns>
+                            <DataGridTemplateColumn Header="状态" Width="96">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border CornerRadius="6" Padding="8,3" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                Background="{Binding BadgeBackground}">
+                                            <TextBlock Text="{Binding Status}" FontWeight="SemiBold" Foreground="{Binding BadgeForeground}"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="键" Binding="{Binding Key}" Width="220">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="VerticalAlignment" Value="Center"/>
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="位置" Binding="{Binding Location}" Width="180">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="VerticalAlignment" Value="Center"/>
+                                        <Setter Property="Opacity" Value="0.75"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Header="差异" Binding="{Binding Preview}" Width="*">
+                                <DataGridTextColumn.ElementStyle>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="VerticalAlignment" Value="Center"/>
+                                        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                    </Style>
+                                </DataGridTextColumn.ElementStyle>
+                            </DataGridTextColumn>
+                        </ui:DataGrid.Columns>
+                    </ui:DataGrid>
+                    <ui:InfoBar Title="{Binding EmptyTitle}" Message="{Binding EmptyMessage}"
+                                IsOpen="{Binding ShowEmpty}" IsClosable="False" IsHitTestVisible="{Binding ShowEmpty}"
+                                Severity="Informational"
+                                VerticalAlignment="Center" Margin="16" MaxWidth="520"/>
+                </Grid>
+
+                <Border Grid.Row="2" Margin="0,8,0,0" Padding="12" CornerRadius="8" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                    <Grid>
+                        <TextBlock Text="选择上方的一行，按列查看本地和线上的差异。"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.65">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasSelection}" Value="False">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <DockPanel>
+                            <DockPanel.Style>
+                                <Style TargetType="DockPanel">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasSelection}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </DockPanel.Style>
+                            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                <CheckBox DockPanel.Dock="Right" Content="显示全部列" IsChecked="{Binding ShowAllCells}" VerticalAlignment="Center"/>
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold" TextTrimming="CharacterEllipsis">
+                                        <Run Text="{Binding SelectedItem.Status, Mode=OneWay}"/>
+                                        <Run Text="  "/>
+                                        <Run Text="{Binding SelectedItem.Key, Mode=OneWay}"/>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding SelectedItem.Location}" Opacity="0.7" FontSize="12"/>
+                                </StackPanel>
+                            </DockPanel>
+                            <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="列" FontWeight="SemiBold" Opacity="0.7"/>
+                                <TextBlock Grid.Column="1" Text="本地" FontWeight="SemiBold"/>
+                                <TextBlock Grid.Column="2" Text="线上" FontWeight="SemiBold" Margin="8,0,0,0"/>
+                            </Grid>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <ItemsControl ItemsSource="{Binding DetailCells}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="140"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Header}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,6,8,0"/>
+                                                <Border x:Name="LocalBox" Grid.Column="1" CornerRadius="6" Padding="8" Margin="0,0,6,0"
+                                                        Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                                        BorderBrush="Transparent" BorderThickness="3,0,0,0">
+                                                    <TextBlock Text="{Binding Right}" TextWrapping="Wrap"/>
+                                                </Border>
+                                                <Border x:Name="RemoteBox" Grid.Column="2" CornerRadius="6" Padding="8"
+                                                        Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                                        BorderBrush="Transparent" BorderThickness="3,0,0,0">
+                                                    <TextBlock Text="{Binding Left}" TextWrapping="Wrap"/>
+                                                </Border>
+                                            </Grid>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding Changed}" Value="True">
+                                                    <Setter TargetName="LocalBox" Property="BorderBrush" Value="#D97706"/>
+                                                    <Setter TargetName="RemoteBox" Property="BorderBrush" Value="#D97706"/>
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Grid>
+                </Border>
+            </Grid>
         </Grid>
-        <DockPanel Grid.Row="5" Margin="20,0,20,16">
+
+        <DockPanel Grid.Row="3" Margin="20,0,20,16">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                 <CheckBox Content="导出后打开" IsChecked="{Binding AutoOpen}" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                <Button Content="导出对比工作簿" Click="OnExport" Padding="16,8" Margin="0,0,8,0"/>
-                <Button Content="关闭" Click="OnClose" Padding="16,8"/>
+                <ui:Button Appearance="Primary" Content="导出对比工作簿" Click="OnExport" Margin="0,0,8,0">
+                    <ui:Button.Icon>
+                        <ui:SymbolIcon Symbol="ArrowDownload24"/>
+                    </ui:Button.Icon>
+                </ui:Button>
+                <ui:Button Appearance="Secondary" Content="关闭" Click="OnClose"/>
             </StackPanel>
-            <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center"/>
+            <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0"/>
         </DockPanel>
     </Grid>
 </ui:FluentWindow>

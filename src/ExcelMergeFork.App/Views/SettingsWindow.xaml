@@ -23,13 +23,26 @@
                 <ColumnDefinition Width="220"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <ListBox x:Name="Nav" Grid.Column="0" BorderThickness="0" SelectionChanged="OnNavChanged" Margin="8">
-                <ListBoxItem Content="常规" Tag="general" IsSelected="True"/>
-                <ListBoxItem Content="备份" Tag="backup"/>
-                <ListBoxItem Content="Fork" Tag="fork"/>
-                <ListBoxItem Content="Git" Tag="git"/>
-                <ListBoxItem Content="更新" Tag="update"/>
-            </ListBox>
+            <Border Grid.Column="0" Margin="16,8,8,16" Padding="8" CornerRadius="8"
+                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="设置" FontWeight="SemiBold" Margin="10,8,10,10"/>
+                    <ListBox x:Name="Nav" BorderThickness="0" Background="Transparent" SelectionChanged="OnNavChanged">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Padding" Value="12,8"/>
+                                <Setter Property="Margin" Value="0,2"/>
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBoxItem Content="常规" Tag="general" IsSelected="True"/>
+                        <ListBoxItem Content="备份" Tag="backup"/>
+                        <ListBoxItem Content="Fork" Tag="fork"/>
+                        <ListBoxItem Content="Git" Tag="git"/>
+                        <ListBoxItem Content="更新" Tag="update"/>
+                    </ListBox>
+                </DockPanel>
+            </Border>
             <ScrollViewer Grid.Column="1" Padding="28,16,28,24">
                 <StackPanel x:Name="PageHost" MaxWidth="720" HorizontalAlignment="Left"/>
             </ScrollViewer>

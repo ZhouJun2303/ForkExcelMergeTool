@@ -70,7 +70,7 @@ public partial class SettingsWindow
         AddRadio("合并对比模式", StartupFeature.MergeDiff, "打开完整三向合并或二向对比窗口。");
         AddRadio("每次询问", StartupFeature.AskEachTime, "每次先选择备份还是合并/对比。适合大表。");
         AddSeparator();
-        var dark = new CheckBox { Content = "深色主题", IsChecked = _settings.DarkTheme, Margin = new Thickness(0, 8, 0, 0) };
+        var dark = new CheckBox { Content = "深色主题", IsChecked = _settings.DarkTheme, Margin = new Thickness(0, 12, 0, 0) };
         dark.Checked += (_, _) => SetTheme(true);
         dark.Unchecked += (_, _) => SetTheme(false);
         PageHost.Children.Add(dark);
@@ -79,9 +79,14 @@ public partial class SettingsWindow
     private void BuildBackup()
     {
         AddTitle("备份根目录", "留空则使用目标文件同目录下的 MergeExcelBackup。");
-        var box = new TextBox { Text = _settings.BackupRootDir, Margin = new Thickness(0, 12, 0, 8) };
+        var box = new Wpf.Ui.Controls.TextBox
+        {
+            Text = _settings.BackupRootDir,
+            PlaceholderText = "留空则使用目标文件旁的 MergeExcelBackup",
+            Margin = new Thickness(0, 12, 0, 8),
+        };
         var row = new StackPanel { Orientation = Orientation.Horizontal };
-        var pick = new Button { Content = "选择目录", Margin = new Thickness(0, 0, 8, 0) };
+        var pick = MakeButton("选择目录");
         pick.Click += (_, _) =>
         {
             var dialog = new OpenFolderDialog { Title = "选择备份根目录" };
@@ -92,14 +97,15 @@ public partial class SettingsWindow
                 AppSettingsStore.Save(_settings);
             }
         };
-        var save = new Button { Content = "保存" };
+        var save = MakeButton("保存", primary: true);
         save.Click += (_, _) =>
         {
             _settings.BackupRootDir = box.Text.Trim();
             AppSettingsStore.Save(_settings);
             System.Windows.MessageBox.Show("备份根目录已保存。");
         };
-        var open = new Button { Content = "打开目录", Margin = new Thickness(8, 0, 0, 0) };
+        var open = MakeButton("打开目录");
+        open.Margin = new Thickness(8, 0, 0, 0);
         open.Click += (_, _) =>
         {
             var root = string.IsNullOrWhiteSpace(box.Text) ? BackupService.ResolveRoot(AppPaths.Home) : box.Text;
@@ -119,9 +125,9 @@ public partial class SettingsWindow
         AddTitle("Fork 一键注入", "安装后，Fork 的 Merge Tool 和 External Diff Tool 会指向本工具。请先关闭 Fork。");
         PageHost.Children.Add(new TextBlock { Text = status.Detail, Margin = new Thickness(0, 12, 0, 12), TextWrapping = TextWrapping.Wrap });
         var row = new StackPanel { Orientation = Orientation.Horizontal };
-        var install = new Button { Content = "安装注入", Margin = new Thickness(0, 0, 8, 0) };
+        var install = MakeButton("安装注入", primary: true);
         install.Click += (_, _) => { ForkIntegration.Install(); ShowPage("fork"); };
-        var uninstall = new Button { Content = "移除注入" };
+        var uninstall = MakeButton("移除注入");
         uninstall.Click += (_, _) => { ForkIntegration.Uninstall(); ShowPage("fork"); };
         row.Children.Add(install);
         row.Children.Add(uninstall);
@@ -137,9 +143,9 @@ public partial class SettingsWindow
         AddTitle("全局 Git 注入", "安装后，任意 Git 工具遇到常见 Excel 后缀冲突都会调用本工具。");
         PageHost.Children.Add(new TextBlock { Text = status.Detail, Margin = new Thickness(0, 12, 0, 12), TextWrapping = TextWrapping.Wrap });
         var row = new StackPanel { Orientation = Orientation.Horizontal };
-        var install = new Button { Content = "安装注入", Margin = new Thickness(0, 0, 8, 0) };
+        var install = MakeButton("安装注入", primary: true);
         install.Click += (_, _) => { GitIntegration.Install(); ShowPage("git"); };
-        var uninstall = new Button { Content = "移除注入" };
+        var uninstall = MakeButton("移除注入");
         uninstall.Click += (_, _) => { GitIntegration.Uninstall(); ShowPage("git"); };
         row.Children.Add(install);
         row.Children.Add(uninstall);
@@ -157,18 +163,14 @@ public partial class SettingsWindow
             Margin = new Thickness(0, 12, 0, 12),
             TextWrapping = TextWrapping.Wrap,
         };
-        var check = new Button
-        {
-            Content = "检查更新",
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Padding = new Thickness(16, 6, 16, 6),
-        };
+        var check = MakeButton("检查更新", primary: true);
+        check.HorizontalAlignment = HorizontalAlignment.Left;
         check.Click += async (_, _) => await CheckForUpdateAsync(check, state);
         PageHost.Children.Add(state);
         PageHost.Children.Add(check);
     }
 
-    private async Task CheckForUpdateAsync(Button check, TextBlock state)
+    private async Task CheckForUpdateAsync(Wpf.Ui.Controls.Button check, TextBlock state)
     {
         if (_updateBusy)
         {
@@ -334,12 +336,26 @@ public partial class SettingsWindow
     {
         PageHost.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 16, 0, 4), FontWeight = FontWeights.SemiBold });
         var row = new DockPanel();
-        var copy = new Button { Content = "复制", Margin = new Thickness(8, 0, 0, 0) };
+        var copy = MakeButton("复制");
+        copy.Margin = new Thickness(8, 0, 0, 0);
         DockPanel.SetDock(copy, Dock.Right);
         copy.Click += (_, _) => Clipboard.SetText(value);
         row.Children.Add(copy);
-        row.Children.Add(new TextBox { Text = value, IsReadOnly = true });
+        row.Children.Add(new Wpf.Ui.Controls.TextBox { Text = value, IsReadOnly = true });
         PageHost.Children.Add(row);
+    }
+
+    private static Wpf.Ui.Controls.Button MakeButton(string content, bool primary = false)
+    {
+        return new Wpf.Ui.Controls.Button
+        {
+            Content = content,
+            Appearance = primary
+                ? Wpf.Ui.Controls.ControlAppearance.Primary
+                : Wpf.Ui.Controls.ControlAppearance.Secondary,
+            Margin = new Thickness(0, 0, 8, 0),
+            Padding = new Thickness(14, 6, 14, 6),
+        };
     }
 
     private void SetTheme(bool dark)

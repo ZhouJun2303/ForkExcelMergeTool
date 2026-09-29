@@ -19,19 +19,26 @@
                 <ui:ImageIcon Source="pack://application:,,,/Assets/app_32.png"/>
             </ui:TitleBar.Icon>
         </ui:TitleBar>
-        <StackPanel Grid.Row="1" Margin="24">
+        <Grid Grid.Row="1" Margin="20,8,20,8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
             <TextBlock x:Name="Headline" FontSize="22" FontWeight="SemiBold"/>
-            <TextBlock x:Name="Detail" TextWrapping="Wrap" Margin="0,8,0,16" Opacity="0.75"/>
-            <DataGrid x:Name="FilesGrid" AutoGenerateColumns="False" IsReadOnly="True" Height="240">
-                <DataGrid.Columns>
-                    <DataGridTextColumn Header="类型" Binding="{Binding Label}" Width="120"/>
+            <TextBlock x:Name="Detail" Grid.Row="1" TextWrapping="Wrap" Margin="0,8,0,12" Opacity="0.75"/>
+            <ui:DataGrid x:Name="FilesGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True"
+                         CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                         BorderThickness="0">
+                <ui:DataGrid.Columns>
+                    <DataGridTextColumn Header="类型" Binding="{Binding Label}" Width="140"/>
                     <DataGridTextColumn Header="备份文件" Binding="{Binding Path}" Width="*"/>
-                </DataGrid.Columns>
-            </DataGrid>
-        </StackPanel>
-        <DockPanel Grid.Row="2" Margin="24,0,24,20">
-            <Button DockPanel.Dock="Right" Content="关闭" Click="OnClose" Padding="16,8"/>
-            <Button Content="打开目录" Click="OnOpen" Padding="16,8"/>
+                </ui:DataGrid.Columns>
+            </ui:DataGrid>
+        </Grid>
+        <DockPanel Grid.Row="2" Margin="20,0,20,16">
+            <ui:Button DockPanel.Dock="Right" Appearance="Secondary" Content="关闭" Click="OnClose"/>
+            <ui:Button Appearance="Primary" Content="打开目录" Click="OnOpen"/>
         </DockPanel>
     </Grid>
 </ui:FluentWindow>
