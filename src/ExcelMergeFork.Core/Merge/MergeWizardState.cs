@@ -145,6 +145,17 @@ public sealed class MergeWizardState
         return true;
     }
 
+    public bool TrySelect(int index)
+    {
+        if (index < 0 || index >= _sheets.Count)
+        {
+            return false;
+        }
+
+        _currentIndex = index;
+        return true;
+    }
+
     private static bool SheetNeedsConfirmation(string sheetName, MergePreview preview) =>
         preview.Items.Any(item => string.Equals(item.Sheet, sheetName, StringComparison.Ordinal)) ||
         preview.ConflictEntries.Any(choice => string.Equals(choice.Sheet, sheetName, StringComparison.Ordinal));
