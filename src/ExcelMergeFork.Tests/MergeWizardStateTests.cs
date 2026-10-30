@@ -102,25 +102,6 @@ public class MergeWizardStateTests
         Assert.Equal("remote", state.Choices.Single(choice => choice.Key == "id-1").Choice);
     }
 
-    [Fact]
-    public void TrySelectJumpsWithoutCompleting()
-    {
-        var state = new MergeWizardState();
-        state.ApplyPreview(Preview(
-            new MergeChoice { Sheet = "Main", Key = "id-1", Kind = ConflictKind.Row },
-            new PreviewItem { Sheet = "Main", Key = "id-1 (修改冲突)", Action = "将保留本地", Tag = PreviewTag.Conflict, ConflictIndex = 0 },
-            new PreviewItem { Sheet = "Info", Key = "说明", Action = "信息", Tag = PreviewTag.Info }),
-            ["Main", "Info"]);
-
-        Assert.Equal("Main", state.CurrentSheet?.Name);
-        Assert.False(state.MoveNext());
-        Assert.True(state.TrySelect(1));
-        Assert.Equal("Info", state.CurrentSheet?.Name);
-        Assert.False(state.Sheets[0].IsCompleted);
-        Assert.False(state.TrySelect(2));
-        Assert.False(state.TrySelect(-1));
-    }
-
     private static MergePreview Preview(params object[] parts)
     {
         var choices = parts.OfType<MergeChoice>().ToList();

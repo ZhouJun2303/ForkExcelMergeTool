@@ -1,0 +1,76 @@
+<ui:FluentWindow x:Class="ExcelMergeFork.App.Views.StartupChoiceWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="选择运行模式"
+                 Icon="pack://application:,,,/Assets/ExcelMergeFork.ico"
+                 Width="820" Height="560"
+                 MinWidth="680" MinHeight="460"
+                 WindowStartupLocation="CenterScreen"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <ui:TitleBar Title="选择运行模式">
+            <ui:TitleBar.Icon>
+                <ui:ImageIcon Source="pack://application:,,,/Assets/app_32.png"/>
+            </ui:TitleBar.Icon>
+        </ui:TitleBar>
+        <Grid Grid.Row="1" Margin="20,8,20,8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="TitleText" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock x:Name="NoticeText" Grid.Row="1" Opacity="0.75" TextWrapping="Wrap" Margin="0,8,0,12"/>
+            <ui:DataGrid x:Name="FilesGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True"
+                         CanUserAddRows="False" CanUserSortColumns="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                         BorderThickness="0" EnableRowVirtualization="True"
+                         VirtualizingPanel.IsVirtualizing="True"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.CanContentScroll="True">
+                <ui:DataGrid.Columns>
+                    <DataGridTextColumn Header="角色" Binding="{Binding Role}" Width="120">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}"/>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="文件" Binding="{Binding Name}" Width="180">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}">
+                                <Setter Property="ToolTip" Value="{Binding Name}"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="大小" Binding="{Binding Size}" Width="80">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}"/>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="路径" Binding="{Binding Path}" Width="*">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}">
+                                <Setter Property="ToolTip" Value="{Binding Path}"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                </ui:DataGrid.Columns>
+            </ui:DataGrid>
+            <TextBlock x:Name="WarnText" Grid.Row="3" Foreground="{DynamicResource SystemFillColorCriticalBrush}" TextWrapping="Wrap" Margin="0,12,0,0"/>
+        </Grid>
+        <Border Grid.Row="2" Padding="20,12" BorderThickness="0,1,0,0"
+                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
+            <DockPanel LastChildFill="False">
+                <ui:Button DockPanel.Dock="Left" Appearance="Secondary" Content="取消" Click="OnCancel" MinWidth="88"/>
+                <ui:Button DockPanel.Dock="Right" Appearance="Primary" Content="进入合并/对比" x:Name="MergeButton" Click="OnMerge" MinWidth="140" Margin="8,0,0,0"/>
+                <ui:Button DockPanel.Dock="Right" Appearance="Secondary" Content="快速备份" Click="OnBackup" MinWidth="110"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</ui:FluentWindow>

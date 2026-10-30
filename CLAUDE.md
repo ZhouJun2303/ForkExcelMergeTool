@@ -6,24 +6,19 @@ Excel three-way merge and two-way comparison tool for Fork. C# / .NET 8 + WPF. P
 
 ```bash
 dotnet test src\ExcelMergeFork.Tests\ExcelMergeFork.Tests.csproj -c Release
-run_web.bat
 package.bat
 ExcelMergeFork.exe <local> <base> <remote> <merged>
 ExcelMergeFork.exe <remote> <local>
 ExcelMergeFork.exe --git-merge-driver <base> <current> <other> <repo-path>
 ```
 
-`run_web.bat` and `ExcelMergeFork.exe` both load `web/`. Edit that UI once; packaging copies it next to the exe.
-
 ## Layout
 
 | Project | Role |
 |---------|------|
 | `src/ExcelMergeFork.Core` | Key normalize, session, conflict, merge A–G, compare, backup, Git/Fork |
-| `src/ExcelMergeFork.Api` | Loopback host shared by the browser and the exe |
-| `src/ExcelMergeFork.App` | WebView2 shell published as `ExcelMergeFork.exe` |
+| `src/ExcelMergeFork.App` | Fluent settings / merge / diff / startup / backup windows |
 | `src/ExcelMergeFork.Tests` | xUnit |
-| `web/` | The only UI. Browser and exe load the same files |
 | `TestData/` | Mode A–E workbooks |
 
 ## Conventions

@@ -54,21 +54,24 @@ public class GitIntegrationTests
     }
 
     [Fact]
-    public void Startup_SetsExplicitShutdownBeforeLaunch()
+    public void StartGitDriver_SetsExplicitShutdownBeforeShow()
     {
         var path = Path.Combine(TestRepo.Root, "src", "ExcelMergeFork.App", "App.xaml.cs");
         var text = File.ReadAllText(path);
+        var start = text.IndexOf("private void StartGitDriver", StringComparison.Ordinal);
+        Assert.True(start >= 0, "missing StartGitDriver");
+        var end = text.IndexOf("private static string? ResolveFeature", start, StringComparison.Ordinal);
+        Assert.True(end > start, "cannot isolate StartGitDriver");
+        var method = text[start..end];
+        Assert.Contains("ShowAndTrack(window", method, StringComparison.Ordinal);
+        Assert.Contains("WindowCloseExitCode(window.WriteBackSucceeded)", method, StringComparison.Ordinal);
+
         var startupAt = text.IndexOf("void OnStartup", StringComparison.Ordinal);
         Assert.True(startupAt >= 0, "missing OnStartup");
         var startup = text[startupAt..];
         var explicitAt = startup.IndexOf("ShutdownMode = ShutdownMode.OnExplicitShutdown", StringComparison.Ordinal);
-        var activateAt = startup.IndexOf("DesktopLaunch.Activate", StringComparison.Ordinal);
+        var resolveAt = startup.IndexOf("ResolveFeature(", StringComparison.Ordinal);
         Assert.True(explicitAt >= 0, "OnStartup must set OnExplicitShutdown");
-        Assert.True(activateAt > explicitAt, "OnExplicitShutdown must be set before the shared UI opens");
-
-        var exitAt = text.IndexOf("int ExitCodeOf", StringComparison.Ordinal);
-        Assert.True(exitAt >= 0, "missing ExitCodeOf");
-        var exit = text[exitAt..];
-        Assert.Contains("WindowCloseExitCode(_desktop?.WriteBackSucceeded ?? false)", exit, StringComparison.Ordinal);
+        Assert.True(resolveAt > explicitAt, "OnExplicitShutdown must be set before any choice dialog");
     }
 }

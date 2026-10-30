@@ -4,16 +4,13 @@
 Windows Excel three-way merge and two-way diff tool for Fork. Application code is C# / .NET 8 under `src/`:
 
 - `ExcelMergeFork.Core` — workbook session, conflict, merge pipeline, compare, backup, Git/Fork
-- `ExcelMergeFork.Api` — loopback host for the shared UI and merge/compare API
-- `ExcelMergeFork.App` — WebView2 shell, published as `ExcelMergeFork.exe`
+- `ExcelMergeFork.App` — WPF Fluent UI, published as `ExcelMergeFork.exe`
 - `ExcelMergeFork.Tests` — xUnit against `TestData/` fixtures
-- `web/` — the only UI; browser and the packaged exe both load it
 
 Do not reintroduce the retired Python `Scripts/` / Tkinter / lite launcher stack.
 
 ## Commands
 - `dotnet test src\ExcelMergeFork.Tests\ExcelMergeFork.Tests.csproj -c Release`
-- `run_web.bat` — browser at http://127.0.0.1:5088, same `web/` the exe loads
 - `package.bat` — test, publish self-contained exe to repo root
 - `ExcelMergeFork.exe` — settings; 4 paths merge; 2 paths compare (remote then local)
 - `install_fork_integration.bat` / `install_git_integration.bat`

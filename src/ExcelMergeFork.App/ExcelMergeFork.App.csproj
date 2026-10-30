@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -8,20 +8,19 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>ExcelMergeFork</AssemblyName>
     <RootNamespace>ExcelMergeFork.App</RootNamespace>
-    <Version>3.4.0</Version>
-    <InformationalVersion>3.4</InformationalVersion>
+    <Version>3.3.0</Version>
+    <InformationalVersion>3.3</InformationalVersion>
     <ApplicationIcon>..\..\Assets\ExcelMergeFork.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="WPF-UI" Version="4.3.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ExcelMergeFork.Core\ExcelMergeFork.Core.csproj" />
-    <ProjectReference Include="..\ExcelMergeFork.Api\ExcelMergeFork.Api.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -30,3 +29,6 @@
   </ItemGroup>
 
 </Project>
+
+
+

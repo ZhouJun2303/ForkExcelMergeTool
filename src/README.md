@@ -6,7 +6,4 @@
 dotnet test src\ExcelMergeFork.Tests\ExcelMergeFork.Tests.csproj -c Release
 dotnet run --project src\ExcelMergeFork.App\ExcelMergeFork.App.csproj
 package.bat
-run_web.bat
 ```
-
-`run_web.bat` 在浏览器打开 `http://127.0.0.1:5088`。界面只在仓库根目录 `web/`。`ExcelMergeFork.exe` 用 WebView2 加载同一份页面，打包时会把 `web/` 复制到 exe 旁边。

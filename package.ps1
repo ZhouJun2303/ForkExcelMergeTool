@@ -49,10 +49,6 @@ if ($LASTEXITCODE -ne 0) { Fail "publish failed" }
 $published = Join-Path $PSScriptRoot "dist\csharp\ExcelMergeFork.exe"
 if (-not (Test-Path $published)) { Fail "published exe missing: $published" }
 
-$webOut = Join-Path $PSScriptRoot "dist\csharp\web"
-if (Test-Path $webOut) { Remove-Item -Recurse -Force $webOut }
-Copy-Item -Recurse -Force (Join-Path $PSScriptRoot "web") $webOut
-
 try {
     Copy-Item -Force $published (Join-Path $PSScriptRoot "ExcelMergeFork.exe")
 } catch {
@@ -71,7 +67,6 @@ if ($PackageZip) {
     if (Test-Path $zip) { Remove-Item -Force $zip }
     Compress-Archive -Force -Path @(
         ".\ExcelMergeFork.exe",
-        ".\web",
         ".\README.md",
         ".\install_fork_integration.bat",
         ".\uninstall_fork_integration.bat",

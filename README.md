@@ -49,18 +49,6 @@ uninstall_git_integration.bat
 - **合并对比**：进入三向合并或二向对比（`.xlsx` / `.xltx`）
 - **每次询问**：先弹窗选择。宏文件（`.xlsm` 等）请用快速备份，避免保存丢 VBA
 
-### 2.4 浏览器里调试
-
-平时改界面、合并和对比，直接跑 `run_web.bat`，浏览器打开 http://127.0.0.1:5088 。页面只在 `web/`。打包后的 `ExcelMergeFork.exe` 加载同一份页面，改完再打包即可，不用维护第二套界面。
-
-可以点 `TestData` 样例，也可以填本机路径或上传 `.xlsx` / `.xltx`。预览、按表确认、选择本地或线上、生成合并结果、二向对比都在页面上完成。生成的文件在临时目录里，从页面下载。这次会话里的 A–G 只留在会话中。桌面版 `ExcelMergeFork.exe` 继续负责 Fork 和 Git。
-
-接口改动后想自动重编译，可以：
-
-```bat
-dotnet watch --project src\ExcelMergeFork.Api\ExcelMergeFork.Api.csproj run
-```
-
 ---
 
 ## 三、在 Fork 里配置
